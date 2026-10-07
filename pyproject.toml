@@ -182,6 +182,9 @@ replace = "__version__ = '{new_version}'"
 
 [tool.pytest.ini_options]
 addopts = "--ignore=pyproject.toml"
+markers = [
+    "scale: multi-table scale benchmarks (slow, run with `invoke scale`)",
+]
 
 [build-system]
 requires = ['setuptools', 'wheel']

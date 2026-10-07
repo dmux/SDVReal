@@ -4,6 +4,7 @@ import contextlib
 from copy import deepcopy
 from functools import lru_cache
 
+import numpy as np
 import pandas as pd
 from rdt.transformers.utils import learn_rounding_digits
 
@@ -294,3 +295,77 @@ def compare_ranges(metadata, data):
 
             if 'decimal_places' in column:
                 assert column['decimal_places'] == learn_rounding_digits(column_data)
+
+
+def generate_multi_table_schema(
+    num_tables, depth, rows_per_table, num_columns=2, null_foreign_key_rate=0.0, seed=0
+):
+    """Generate random data and metadata for a tree shaped multi-table schema.
+
+    The first ``depth`` tables form a chain (``table_0`` is the root) and the remaining tables
+    are attached to random tables, without exceeding ``depth``. Every non-root table has a
+    foreign key to its parent, assigned uniformly at random.
+
+    Args:
+        num_tables (int):
+            Number of tables in the schema.
+        depth (int):
+            Number of tables in the longest relationship chain, as computed by
+            ``Metadata._get_max_schema_depth``.
+        rows_per_table (int):
+            Number of rows of every table.
+        num_columns (int):
+            Number of numerical columns of every table. A categorical column is also added.
+        null_foreign_key_rate (float):
+            Fraction of foreign keys that are null in every child table.
+        seed (int):
+            Seed for the random generator.
+
+    Returns:
+        tuple[dict, Metadata]:
+            The data and the metadata.
+    """
+    rng = np.random.default_rng(seed)
+    table_depths = {'table_0': 1}
+    parents = {}
+    for index in range(1, num_tables):
+        table_name = f'table_{index}'
+        if index < depth:
+            parent_name = f'table_{index - 1}'
+        else:
+            candidates = [name for name, level in table_depths.items() if level < depth]
+            parent_name = candidates[rng.integers(len(candidates))]
+
+        parents[table_name] = parent_name
+        table_depths[table_name] = table_depths[parent_name] + 1
+
+    data = {}
+    tables = {}
+    relationships = []
+    for table_name in table_depths:
+        columns = {'id': {'sdtype': 'id'}, 'category': {'sdtype': 'categorical'}}
+        table_data = {
+            'id': np.arange(rows_per_table),
+            'category': rng.choice(['A', 'B', 'C', 'D'], rows_per_table),
+        }
+        for column_index in range(num_columns):
+            columns[f'value_{column_index}'] = {'sdtype': 'numerical'}
+            table_data[f'value_{column_index}'] = rng.normal(column_index, 1, rows_per_table)
+
+        if table_name in parents:
+            columns['parent_id'] = {'sdtype': 'id'}
+            foreign_keys = rng.integers(0, rows_per_table, rows_per_table).astype(float)
+            foreign_keys[rng.random(rows_per_table) < null_foreign_key_rate] = np.nan
+            table_data['parent_id'] = foreign_keys
+            relationships.append({
+                'parent_table_name': parents[table_name],
+                'child_table_name': table_name,
+                'parent_primary_key': 'id',
+                'child_foreign_key': 'parent_id',
+            })
+
+        data[table_name] = pd.DataFrame(table_data)
+        tables[table_name] = {'primary_key': 'id', 'columns': columns}
+
+    metadata = Metadata.load_from_dict({'tables': tables, 'relationships': relationships})
+    return data, metadata

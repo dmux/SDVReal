@@ -1,5 +1,11 @@
 # Release Notes
 
+## Unreleased
+
+### New Features
+
+* Add `IndependentSynthesizer`, a multi-table synthesizer with no limit on the number of tables or schema depth that scales linearly with the data - Issue [#1](https://github.com/dmux/SDVReal/issues/1)
+
 ## v1.38.5 - 2026-09-28
 
 ### New Features

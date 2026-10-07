@@ -40,6 +40,11 @@ def benchmark_dtypes(c):
     c.run('python -m pytest ./tests/benchmark/supported_dtypes_benchmark.py')
 
 
+@task
+def scale(c):
+    c.run('python -m pytest ./tests/benchmark/multi_table_scale.py -m scale -s')
+
+
 def _get_minimum_versions(dependencies, python_version):
     min_versions = {}
     for dependency in dependencies:
