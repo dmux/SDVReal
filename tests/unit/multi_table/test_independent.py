@@ -136,6 +136,23 @@ class TestIndependentSynthesizer:
         counts = pd.Series(values).value_counts().reindex(parent_keys, fill_value=0)
         assert counts.isin([0, 4]).mean() > 0.95
 
+    def test__sample_foreign_key_values_keeps_heavy_tail(self):
+        """Test that a single parent with many children is kept when sampling at scale 1."""
+        # Setup
+        np.random.seed(0)
+        parent_keys = np.arange(1000)
+        cardinality = np.zeros(5001, dtype=int)
+        cardinality[1] = 999
+        cardinality[5000] = 1
+
+        # Run
+        values = IndependentSynthesizer._sample_foreign_key_values(cardinality, parent_keys, 5999)
+
+        # Assert
+        counts = pd.Series(values).value_counts().reindex(parent_keys, fill_value=0)
+        assert counts.max() == 5000
+        assert (counts == 1).sum() == 999
+
     def test__sample_foreign_key_values_no_children(self):
         """Test that no keys are returned if there are no children to assign."""
         # Run
@@ -173,6 +190,24 @@ class TestIndependentSynthesizer:
         foreign_keys = child['parent_id']
         assert foreign_keys.isna().sum() == 20
         assert foreign_keys.dropna().isin(parent['parent_id']).all()
+
+    def test__add_foreign_key_columns_all_null_string_keys(self):
+        """Test that all-null foreign keys keep the dtype of string parent keys."""
+        # Setup
+        instance = IndependentSynthesizer(_get_parent_child_metadata())
+        key = '__parent__child__parent_id'
+        instance._cardinality[key] = np.array([5])
+        instance._null_foreign_key_rates[key] = 1.0
+        parent = pd.DataFrame({'parent_id': ['a', 'b', 'c']})
+        child = pd.DataFrame({'child_id': np.arange(4)})
+
+        # Run
+        instance._add_foreign_key_columns(child, parent, 'child', 'parent')
+
+        # Assert
+        assert child['parent_id'].dtype == object
+        assert child['parent_id'].isna().all()
+        child.merge(parent, on='parent_id', how='left')
 
     def test__add_foreign_key_columns_is_reproducible(self):
         """Test that the same seed produces the same foreign keys."""

@@ -4,7 +4,6 @@ import logging
 import warnings
 
 import numpy as np
-import pandas as pd
 from tqdm import tqdm
 
 from sdv.multi_table.base import BaseMultiTableSynthesizer
@@ -117,20 +116,25 @@ class IndependentSynthesizer(BaseIndependentSampler, BaseMultiTableSynthesizer):
     def _sample_foreign_key_values(cardinality, parent_keys, num_children):
         """Sample ``num_children`` parent keys following the children-per-parent distribution.
 
-        The number of children of every parent is sampled from ``cardinality``. Since the sum
-        of the sampled counts is close to, but not exactly, ``num_children``, the surplus is
-        removed at random and the deficit is filled by repeating already assigned parents.
+        The real children-per-parent counts are resampled without replacement (repeating the
+        whole set of counts as many times as needed), so heavy tails such as a single parent
+        with thousands of children are preserved instead of being drawn or missed at random.
+        Since the sum of the sampled counts is close to, but not exactly, ``num_children``, the
+        surplus is removed at random and the deficit is filled by repeating assigned parents.
         """
         if len(parent_keys) == 0 or num_children == 0:
             return parent_keys[:0]
 
-        total = cardinality.sum()
-        if total == 0:
+        real_counts = np.repeat(np.arange(len(cardinality)), cardinality)
+        if len(real_counts) == 0:
             counts = np.zeros(len(parent_keys), dtype=int)
         else:
-            counts = np.random.choice(
-                len(cardinality), size=len(parent_keys), p=cardinality / total
-            )
+            repeats, remainder = divmod(len(parent_keys), len(real_counts))
+            counts = np.concatenate([
+                np.tile(real_counts, repeats),
+                np.random.choice(real_counts, remainder, replace=False),
+            ])
+            counts = np.random.permutation(counts)
 
         values = np.repeat(parent_keys, counts)
         if len(values) > num_children:
@@ -170,15 +174,16 @@ class IndependentSynthesizer(BaseIndependentSampler, BaseMultiTableSynthesizer):
                 continue
 
             num_nulls = round(num_rows * self._null_foreign_key_rates.get(key, 0.0))
-            values = pd.Series(
-                self._sample_foreign_key_values(
-                    self._cardinality[key], parent_keys, num_rows - num_nulls
-                )
+            values = self._sample_foreign_key_values(
+                self._cardinality[key], parent_keys, num_rows - num_nulls
             )
             if num_nulls:
-                values = pd.concat([values, pd.Series([np.nan] * num_nulls)], ignore_index=True)
+                # keep string keys as object so they can still be merged with the parent keys
+                dtype = object if parent_keys.dtype == object else float
+                nulls = np.full(num_nulls, np.nan, dtype=dtype)
+                values = np.concatenate([values.astype(dtype), nulls])
 
-            child_table[foreign_key] = values.sample(frac=1).to_numpy()
+            child_table[foreign_key] = np.random.permutation(values)
 
     def _get_one_to_one_keys(self, parent_keys, num_rows, child_name):
         if num_rows > len(parent_keys):
