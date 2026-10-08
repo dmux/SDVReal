@@ -1,0 +1,1078 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HMA vs Independent</title>
+<meta name="description" content="Animação do fluxo de um engenheiro de dados usando o SDV multi-tabela: o caminho padrão com HMASynthesizer e o novo IndependentSynthesizer, com os números do benchmark CNPJ.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  color-scheme: light;
+  --bg: #f4f3ef;
+  --surface: #fcfcfb;
+  --surface-2: #efeee9;
+  --ink: #0b0b0b;
+  --ink-2: #52514e;
+  --muted: #7d7c77;
+  --line: #dddcd5;
+  --hma: #eb6834;
+  --hma-soft: #fbe2d7;
+  --ind: #2a78d6;
+  --ind-soft: #dbe8f8;
+  --bad: #c62f2e;
+  --bad-soft: #fbe1e0;
+  --good: #1a7f37;
+  --good-soft: #dcf0e1;
+  --warn: #9a6700;
+  --term-bg: #101216;
+  --term-ink: #d7dae0;
+  --term-muted: #7f8794;
+  --shadow: 0 1px 2px rgba(0,0,0,.06), 0 8px 24px rgba(0,0,0,.06);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #121211;
+    --surface: #1a1a19;
+    --surface-2: #232321;
+    --ink: #ffffff;
+    --ink-2: #c3c2b7;
+    --muted: #8f8e86;
+    --line: #34332f;
+    --hma: #d95926;
+    --hma-soft: #3a2218;
+    --ind: #3987e5;
+    --ind-soft: #172a42;
+    --bad: #e66767;
+    --bad-soft: #3b1c1c;
+    --good: #3fb950;
+    --good-soft: #15301c;
+    --warn: #d29922;
+    --term-bg: #0b0c0f;
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.3);
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #121211;
+  --surface: #1a1a19;
+  --surface-2: #232321;
+  --ink: #ffffff;
+  --ink-2: #c3c2b7;
+  --muted: #8f8e86;
+  --line: #34332f;
+  --hma: #d95926;
+  --hma-soft: #3a2218;
+  --ind: #3987e5;
+  --ind-soft: #172a42;
+  --bad: #e66767;
+  --bad-soft: #3b1c1c;
+  --good: #3fb950;
+  --good-soft: #15301c;
+  --warn: #d29922;
+  --term-bg: #0b0c0f;
+  --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.3);
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font: 15px/1.5 Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+code, .mono { font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace; }
+.wrap { max-width: 1280px; margin: 0 auto; padding: 24px 16px 40px; }
+
+header h1 { font-size: 22px; line-height: 1.25; margin: 0 0 4px; letter-spacing: -.01em; }
+header p { margin: 0; color: var(--ink-2); max-width: 820px; }
+.legend-inline { display: inline-flex; gap: 14px; margin-top: 10px; flex-wrap: wrap; font-size: 13px; color: var(--ink-2); }
+.legend-inline span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; background: currentColor; }
+.legend-inline .l-hma::before { background: var(--hma); }
+.legend-inline .l-ind::before { background: var(--ind); }
+
+/* controls */
+.controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 18px 0 12px; }
+button, select {
+  font: inherit; font-size: 13px; color: var(--ink); background: var(--surface);
+  border: 1px solid var(--line); border-radius: 8px; padding: 6px 12px; cursor: pointer;
+}
+button:hover, select:hover { border-color: var(--muted); }
+button:focus-visible, select:focus-visible { outline: 2px solid var(--ind); outline-offset: 2px; }
+button.primary { background: var(--ink); color: var(--surface); border-color: var(--ink); min-width: 92px; }
+.chapters { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
+.chapters button { font-size: 12.5px; padding: 5px 10px; color: var(--ink-2); display: inline-flex; align-items: center; gap: 6px; }
+.chapters button .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--line); }
+.chapters button[data-who="hma"] .dot { background: var(--hma); }
+.chapters button[data-who="ind"] .dot { background: var(--ind); }
+.chapters button[data-who="both"] .dot { background: linear-gradient(90deg, var(--hma) 50%, var(--ind) 50%); }
+.chapters button.active { color: var(--ink); border-color: var(--ink); font-weight: 600; }
+.chapters button.done { color: var(--muted); }
+.spacer { flex: 1; }
+.progress { height: 3px; background: var(--line); border-radius: 2px; overflow: hidden; margin-bottom: 14px; }
+.progress > div { height: 100%; width: 0; background: var(--ink); transition: width .3s; }
+
+/* stage */
+.stage { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); gap: 16px; }
+@media (max-width: 920px) { .stage { grid-template-columns: minmax(0, 1fr); } }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow); min-width: 0; }
+
+.term { background: var(--term-bg); border-color: #22252b; display: flex; flex-direction: column; min-height: 560px; }
+.term-bar { display: flex; align-items: center; gap: 6px; padding: 10px 14px; border-bottom: 1px solid #22252b; color: var(--term-muted); font-size: 12px; }
+.term-bar i { width: 10px; height: 10px; border-radius: 50%; background: #3a3f48; display: inline-block; }
+.term-bar .title { margin-left: 8px; font-family: "JetBrains Mono", monospace; }
+.term-body {
+  flex: 1; padding: 14px 16px 18px; overflow-y: auto; overflow-x: hidden;
+  font: 12.5px/1.65 "JetBrains Mono", ui-monospace, Menlo, monospace; color: var(--term-ink);
+  max-height: 600px;
+}
+.ln { white-space: pre-wrap; word-break: break-word; min-height: 1.65em; }
+.ln .pr { color: #6c7686; user-select: none; }
+.ln.out { color: #aab1bd; }
+.ln.err { color: #ff8b8b; }
+.ln.ok { color: #7ee2a0; }
+.ln.warn { color: #f2c66d; }
+.ln.note { color: #8fb7ff; }
+.ln.dim { color: var(--term-muted); }
+.tk-k { color: #c792ea; } .tk-s { color: #c3e88d; } .tk-c { color: #6c7686; font-style: italic; } .tk-n { color: #f78c6c; } .tk-f { color: #82aaff; }
+.cursor { display: inline-block; width: 7px; height: 1.1em; background: #d7dae0; vertical-align: -2px; animation: blink 1s steps(1) infinite; margin-left: 1px; }
+@keyframes blink { 50% { opacity: 0; } }
+
+.viz { padding: 16px; min-height: 560px; display: flex; flex-direction: column; gap: 12px; position: relative; overflow: hidden; }
+.viz-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.tag { font-size: 12px; font-weight: 600; letter-spacing: .02em; padding: 3px 9px; border-radius: 999px; background: var(--surface-2); color: var(--ink-2); }
+.tag.hma { background: var(--hma-soft); color: var(--ink); box-shadow: inset 3px 0 0 var(--hma); }
+.tag.ind { background: var(--ind-soft); color: var(--ink); box-shadow: inset 3px 0 0 var(--ind); }
+.viz h3 { margin: 0; font-size: 15px; }
+.muted { color: var(--muted); }
+.small { font-size: 12.5px; }
+
+.caption {
+  margin-top: 14px; padding: 14px 18px; border-radius: 12px; background: var(--surface); border: 1px solid var(--line);
+  font-size: 15.5px; line-height: 1.55; min-height: 74px; display: flex; gap: 14px; align-items: flex-start;
+}
+.caption .who { flex: none; font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); padding-top: 3px; width: 86px; }
+.caption .txt { transition: opacity .25s; }
+.caption .txt.fade { opacity: 0; }
+.caption code { font-size: 13.5px; background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }
+
+/* schema svg */
+svg.schema { width: 100%; height: auto; display: block; }
+.node .box { fill: var(--surface); stroke: var(--line); stroke-width: 1.5; transition: fill .3s, stroke .3s; }
+.node .nm { font: 600 12px Inter, sans-serif; fill: var(--ink); }
+.node .sub { font: 10.5px "JetBrains Mono", monospace; fill: var(--muted); }
+.node .fill { fill: var(--ind); }
+.node .track { fill: var(--surface-2); }
+.node { transition: opacity .35s, transform .35s; }
+.node.off { opacity: 0; }
+.node.dom .box { fill: var(--surface-2); }
+.node.cut { opacity: .22; }
+.node.cut .nm { text-decoration: line-through; }
+.node.prep .box { stroke: var(--ind); stroke-dasharray: 4 3; }
+.node.fit .box { stroke: var(--ind); stroke-dasharray: none; fill: var(--ind-soft); }
+.node.hma .box { stroke: var(--hma); fill: var(--hma-soft); }
+.node.bad .box { stroke: var(--bad); fill: var(--bad-soft); }
+.badge { opacity: 0; transition: opacity .3s; }
+.badge.on { opacity: 1; }
+.badge circle { fill: var(--ind); stroke: var(--surface); stroke-width: 2; }
+.badge text { font: 700 8.5px Inter, sans-serif; fill: #fff; }
+.edge { fill: none; stroke: var(--muted); stroke-width: 1.4; opacity: .7; transition: stroke .3s, opacity .3s; }
+.edge.cut { opacity: .08; }
+.edge.learn { stroke: var(--ind); opacity: 1; stroke-width: 2; }
+.edge.flow { stroke: var(--ind); opacity: 1; stroke-width: 2; stroke-dasharray: 5 5 !important; animation: flow .6s linear infinite; }
+.edge.hma { stroke: var(--hma); opacity: 1; }
+@keyframes flow { to { stroke-dashoffset: -10; } }
+.shake { animation: shake .45s; }
+@keyframes shake { 20%,60% { transform: translateX(-6px); } 40%,80% { transform: translateX(6px); } }
+
+.chips { display: flex; gap: 6px; flex-wrap: wrap; min-height: 28px; }
+.chip { font-size: 12.5px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); color: var(--ink-2); animation: pop .35s ease-out both; }
+.chip b { color: var(--ink); font-weight: 600; }
+.chip.bad { border-color: var(--bad); background: var(--bad-soft); color: var(--ink); }
+.chip.ok { border-color: var(--good); background: var(--good-soft); color: var(--ink); }
+.chip.ind { border-color: var(--ind); background: var(--ind-soft); color: var(--ink); }
+@keyframes pop { from { opacity: 0; transform: translateY(4px) scale(.97); } to { opacity: 1; transform: none; } }
+
+/* HMA internals */
+.grid-cells { display: grid; grid-template-columns: repeat(30, 1fr); gap: 2px; }
+.grid-cells i { aspect-ratio: 1; border-radius: 2px; background: var(--surface-2); display: block; }
+.grid-cells i.on { background: var(--hma); }
+.grid-cells i.on2 { background: var(--hma); opacity: .55; }
+.clock { font: 600 40px/1 "JetBrains Mono", monospace; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+.clock.bad { color: var(--bad); }
+.kv { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; font-size: 13px; }
+.kv dt { color: var(--muted); }
+.kv dd { margin: 0; }
+.box2 { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; background: var(--surface); }
+.row { display: flex; gap: 12px; flex-wrap: wrap; }
+.row > * { flex: 1 1 220px; min-width: 0; }
+.speedup { font-size: 12px; color: var(--muted); }
+
+/* phase timeline */
+.tl { display: flex; gap: 2px; height: 22px; border-radius: 6px; overflow: hidden; background: var(--surface-2); }
+.tl .seg { position: relative; height: 100%; background: transparent; overflow: hidden; }
+.tl .seg > b { position: absolute; inset: 0 auto 0 0; width: 0; background: var(--ind); }
+.tl.hma .seg > b { background: var(--hma); }
+.tl .seg:nth-child(2n) > b { opacity: .72; }
+.tl-labels { display: flex; gap: 2px; font-size: 11px; color: var(--muted); margin-top: 4px; }
+.tl-labels span { overflow: hidden; white-space: nowrap; text-overflow: clip; }
+.gauge { position: relative; height: 12px; border-radius: 6px; background: var(--surface-2); overflow: visible; }
+.gauge > b { position: absolute; inset: 0 auto 0 0; width: 0; background: var(--ind); border-radius: 6px; }
+.gauge .mark { position: absolute; top: -4px; bottom: -4px; width: 2px; background: var(--bad); }
+.gauge-labels { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); margin-top: 6px; }
+.big { font: 600 22px/1.1 "JetBrains Mono", monospace; font-variant-numeric: tabular-nums; }
+
+/* race */
+.lane { display: grid; grid-template-columns: 150px minmax(0, 1fr) 96px; align-items: center; gap: 10px; }
+@media (max-width: 560px) { .lane { grid-template-columns: 96px minmax(0, 1fr) 78px; } }
+.lane .name { font-size: 13px; font-weight: 600; }
+.lane .name small { display: block; font-weight: 400; color: var(--muted); font-size: 11.5px; }
+.track { position: relative; height: 26px; border-radius: 6px; background: var(--surface-2); overflow: hidden; }
+.track > b { position: absolute; inset: 0 auto 0 0; width: 0; border-radius: 0 4px 4px 0; }
+.track .tick { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--surface); }
+.lane .t { font: 600 14px "JetBrains Mono", monospace; text-align: right; font-variant-numeric: tabular-nums; }
+.done-flag { color: var(--good); }
+
+table.cmp { width: 100%; border-collapse: collapse; font-size: 13px; }
+table.cmp th, table.cmp td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+table.cmp th { font-size: 11.5px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 600; }
+table.cmp td.num { font-family: "JetBrains Mono", monospace; font-variant-numeric: tabular-nums; }
+table.cmp tr.hid { opacity: 0; }
+table.cmp tr { transition: opacity .35s; }
+.y { color: var(--good); font-weight: 600; }
+.n { color: var(--bad); font-weight: 600; }
+.p { color: var(--warn); font-weight: 600; }
+.win { font-weight: 700; }
+
+/* chart */
+.chart-wrap { position: relative; }
+svg.chart { width: 100%; height: auto; display: block; overflow: visible; }
+.axis text { font: 10.5px "JetBrains Mono", monospace; fill: var(--muted); }
+.axis line, .axis path { stroke: var(--line); }
+.grid line { stroke: var(--line); stroke-dasharray: 2 3; }
+.series-ind { stroke: var(--ind); fill: none; stroke-width: 2; }
+.series-ind2 { stroke: var(--ind); fill: none; stroke-width: 2; stroke-dasharray: 5 4; opacity: .8; }
+.pt { stroke: var(--surface); stroke-width: 2; cursor: pointer; transition: r .15s; }
+.pt:hover { r: 7; }
+.lbl { font: 600 11px Inter, sans-serif; fill: var(--ink-2); }
+.tooltip { position: absolute; pointer-events: none; background: var(--ink); color: var(--surface); font-size: 12px; padding: 6px 9px; border-radius: 6px; white-space: nowrap; opacity: 0; transition: opacity .12s; z-index: 5; }
+.membars { display: flex; gap: 6px; position: relative; padding-top: 30px; margin-top: 4px; }
+.membars .mb { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; font-size: 10.5px; color: var(--muted); }
+.membars .area { position: relative; height: 90px; width: 100%; display: flex; justify-content: center; align-items: flex-end; }
+.membars .mb b { display: block; width: 100%; max-width: 34px; background: var(--ind); border-radius: 4px 4px 0 0; height: 0; opacity: 0; transition: height .6s cubic-bezier(.2,.8,.2,1); }
+.membars .mb.cut b { background: repeating-linear-gradient(135deg, var(--bad) 0 4px, transparent 4px 8px); border: 1.5px solid var(--bad); border-bottom: 0; }
+.membars .mb .v { position: absolute; left: 0; right: 0; text-align: center; font-family: "JetBrains Mono", monospace; color: var(--ink-2); transition: opacity .3s; }
+.membars .mb > span { margin-top: 4px; }
+.membars .ceil { position: absolute; left: 0; right: 0; top: 30px; border-top: 1.5px dashed var(--bad); font-size: 10.5px; color: var(--bad); }
+.membars .ceil span { position: absolute; right: 0; top: -16px; background: var(--surface); padding-left: 4px; }
+.stat { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+.stat .k { font-size: 12px; color: var(--muted); }
+.stat .v { font: 600 20px/1.2 "JetBrains Mono", monospace; }
+details { font-size: 12.5px; color: var(--ink-2); }
+details summary { cursor: pointer; color: var(--muted); }
+
+.recs { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 8px; }
+.rec { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; font-size: 12.5px; animation: pop .4s ease-out both; }
+.rec b { display: block; font-size: 13px; margin-bottom: 2px; }
+.rec.ind { box-shadow: inset 3px 0 0 var(--ind); }
+.rec.hma { box-shadow: inset 3px 0 0 var(--hma); }
+.rec.none { box-shadow: inset 3px 0 0 var(--muted); }
+
+footer { margin-top: 18px; font-size: 12.5px; color: var(--muted); }
+footer code { font-size: 12px; }
+.kbd { font: 11px "JetBrains Mono", monospace; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .shake, .chip, .rec { animation: none; }
+  .edge.flow { animation: none; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Do <code>HMASynthesizer</code> ao <code>IndependentSynthesizer</code></h1>
+    <p>Como um engenheiro de dados gera dados sintéticos multi-tabela da base CNPJ com o SDV: o caminho padrão, onde ele esbarra, e como ficou com a nova abordagem. Todos os números vêm de <code>benchmarks/BENCHMARK.pt-BR.md</code> (MacBook Pro M4, 16 GB, release CNPJ 2026-09).</p>
+    <div class="legend-inline"><span class="l-hma">HMASynthesizer (padrão do SDV Community)</span><span class="l-ind">IndependentSynthesizer (nova implementação)</span></div>
+  </header>
+
+  <div class="controls">
+    <button class="primary" id="btn-play" aria-label="Pausar ou continuar">❚❚ Pausar</button>
+    <button id="btn-prev" aria-label="Cena anterior">◀ Anterior</button>
+    <button id="btn-next" aria-label="Próxima cena">Próxima ▶</button>
+    <button id="btn-restart">↺ Recomeçar</button>
+    <label class="small muted" for="speed" style="margin-left:6px">Velocidade</label>
+    <select id="speed">
+      <option value="0.75">0,75×</option>
+      <option value="1" selected>1×</option>
+      <option value="1.5">1,5×</option>
+      <option value="2">2×</option>
+      <option value="3">3×</option>
+    </select>
+    <span class="spacer"></span>
+    <span class="small muted"><span class="kbd">espaço</span> pausa · <span class="kbd">←</span> <span class="kbd">→</span> cenas</span>
+  </div>
+  <nav class="chapters" id="chapters" aria-label="Cenas"></nav>
+  <div class="progress"><div id="progress"></div></div>
+
+  <main class="stage">
+    <section class="card term" aria-label="Terminal do engenheiro">
+      <div class="term-bar"><i></i><i></i><i></i><span class="title" id="term-title">python · SDVReal</span></div>
+      <div class="term-body" id="term" aria-live="polite"></div>
+    </section>
+    <section class="card viz" id="viz" aria-label="Visualização"></section>
+  </main>
+
+  <div class="caption"><div class="who" id="cap-who">Narração</div><div class="txt" id="cap"></div></div>
+
+  <footer>
+    Fonte: <code>benchmarks/BENCHMARK.pt-BR.md</code> · código em <code>sdv/multi_table/independent.py</code> e <code>benchmarks/cnpj/run.py</code>.
+    Os relógios das cenas do HMA e da corrida são acelerados; a proporção entre os tempos é a medida.
+  </footer>
+</div>
+
+<script>
+(() => {
+'use strict';
+
+/* ---------- engine: pausável, com velocidade e cancelamento ---------- */
+const CANCEL = Symbol('cancel');
+const S = { speed: 1, paused: false, run: 0, scene: 0 };
+const $ = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+const term = $('#term');
+const viz = $('#viz');
+
+function wait(ms) {
+  const id = S.run;
+  return new Promise((res, rej) => {
+    let left = ms, last = performance.now();
+    const f = now => {
+      if (id !== S.run) return rej(CANCEL);
+      if (!S.paused) left -= (now - last) * S.speed;
+      last = now;
+      if (left <= 0) res(); else requestAnimationFrame(f);
+    };
+    requestAnimationFrame(f);
+  });
+}
+const easeInOut = p => p < .5 ? 2 * p * p : 1 - Math.pow(-2 * p + 2, 2) / 2;
+const linear = p => p;
+function tween(ms, fn, ease = easeInOut) {
+  const id = S.run;
+  return new Promise((res, rej) => {
+    let t = 0, last = performance.now();
+    const f = now => {
+      if (id !== S.run) return rej(CANCEL);
+      if (!S.paused) t += (now - last) * S.speed;
+      last = now;
+      const p = Math.min(1, t / ms);
+      fn(ease(p), p);
+      if (p < 1) requestAnimationFrame(f); else res();
+    };
+    requestAnimationFrame(f);
+  });
+}
+
+/* ---------- formatação pt-BR ---------- */
+const nf = (v, d = 0) => v.toLocaleString('pt-BR', { minimumFractionDigits: d, maximumFractionDigits: d });
+function clock(s) {
+  const m = Math.floor(s / 60), r = s - m * 60;
+  return `${String(m).padStart(2, '0')}:${r.toFixed(1).padStart(4, '0').replace('.', ',')}`;
+}
+
+/* ---------- terminal ---------- */
+function esc(s) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+function hl(src) {
+  const re = /(#.*$)|('[^']*'|"[^"]*")|\b(from|import|as|for|in|None|True|False|def|return)\b|\b(len|sum|print)\b|(\b\d[\d_.]*\b)/g;
+  let out = '', last = 0, m;
+  while ((m = re.exec(src))) {
+    out += esc(src.slice(last, m.index));
+    const [t] = m;
+    const cls = m[1] ? 'c' : m[2] ? 's' : m[3] ? 'k' : m[4] ? 'f' : 'n';
+    out += `<span class="tk-${cls}">${esc(t)}</span>`;
+    last = m.index + t.length;
+  }
+  return out + esc(src.slice(last));
+}
+function newLine(cls = '') {
+  const d = document.createElement('div');
+  d.className = 'ln ' + cls;
+  term.appendChild(d);
+  term.scrollTop = term.scrollHeight;
+  return d;
+}
+const cursor = document.createElement('span');
+cursor.className = 'cursor';
+async function type(code, prompt = '>>> ') {
+  const lines = code.split('\n');
+  for (let li = 0; li < lines.length; li++) {
+    const l = lines[li];
+    const d = newLine('in');
+    d.innerHTML = `<span class="pr">${esc(li === 0 ? prompt : (prompt === '$ ' ? '  ' : '... '))}</span>`;
+    const t = document.createElement('span');
+    d.appendChild(t);
+    d.appendChild(cursor);
+    for (let i = 0; i < l.length; i++) {
+      t.textContent = l.slice(0, i + 1);
+      await wait(l[i] === ' ' ? 10 : 19);
+    }
+    t.innerHTML = hl(l);
+    await wait(140);
+  }
+  cursor.remove();
+  await wait(260);
+}
+function out(text, cls = 'out') {
+  for (const l of text.split('\n')) newLine(cls).textContent = l;
+}
+function blank() { newLine(); }
+
+/* ---------- narração ---------- */
+const cap = $('#cap');
+async function say(html, who) {
+  cap.classList.add('fade');
+  await wait(220);
+  cap.innerHTML = html;
+  $('#cap-who').textContent = who || 'Narração';
+  cap.classList.remove('fade');
+}
+
+/* ---------- schema CNPJ ---------- */
+const NODES = {
+  naturezas:        { x: 58,  y: 26,  w: 96,  h: 38, dom: 1, sub: 'domínio' },
+  qualificacoes:    { x: 163, y: 26,  w: 96,  h: 38, dom: 1, sub: 'domínio' },
+  motivos:          { x: 268, y: 26,  w: 96,  h: 38, dom: 1, sub: 'domínio' },
+  cnaes:            { x: 373, y: 26,  w: 96,  h: 38, dom: 1, sub: 'domínio' },
+  municipios:       { x: 478, y: 26,  w: 96,  h: 38, dom: 1, sub: 'domínio' },
+  paises:           { x: 583, y: 26,  w: 96,  h: 38, dom: 1, sub: 'domínio' },
+  empresas:         { x: 118, y: 160, w: 150, h: 48, sub: '70,1 M linhas' },
+  simples:          { x: 70,  y: 300, w: 116, h: 48, sub: '50,4 M · 1:1' },
+  socios:           { x: 262, y: 300, w: 126, h: 48, sub: '28,3 M · sem PK' },
+  estabelecimentos: { x: 470, y: 300, w: 170, h: 48, sub: '73,4 M linhas' },
+};
+// [pai, filho, coluna FK]
+const EDGES = [
+  ['naturezas', 'empresas', 'natureza_juridica'],
+  ['qualificacoes', 'empresas', 'qualificacao_responsavel'],
+  ['empresas', 'simples', 'cnpj_basico'],
+  ['empresas', 'socios', 'cnpj_basico'],
+  ['empresas', 'estabelecimentos', 'cnpj_basico'],
+  ['qualificacoes', 'socios', 'qualificacao_socio'],
+  ['qualificacoes', 'socios', 'qualificacao_representante_legal'],
+  ['paises', 'socios', 'pais'],
+  ['motivos', 'estabelecimentos', 'motivo_situacao_cadastral'],
+  ['cnaes', 'estabelecimentos', 'cnae_fiscal_principal'],
+  ['municipios', 'estabelecimentos', 'municipio'],
+  ['paises', 'estabelecimentos', 'pais'],
+];
+const ORDER = ['naturezas', 'qualificacoes', 'motivos', 'cnaes', 'municipios', 'paises', 'empresas', 'simples', 'socios', 'estabelecimentos'];
+
+function schemaSVG(id = 'schema') {
+  // espalha os pontos de saída/entrada de cada aresta pela largura do nó
+  const outs = {}, ins = {};
+  EDGES.forEach((e, i) => { (outs[e[0]] ||= []).push(i); (ins[e[1]] ||= []).push(i); });
+  const port = (list, name, i, spread) => {
+    const n = NODES[name];
+    const sorted = [...list].sort((a, b) => {
+      const other = idx => NODES[EDGES[idx][list === outs[name] ? 1 : 0]].x;
+      return other(a) - other(b) || a - b;
+    });
+    const k = sorted.indexOf(i), c = sorted.length;
+    return c === 1 ? n.x : n.x - n.w * spread / 2 + (n.w * spread) * k / (c - 1);
+  };
+  let edges = '';
+  EDGES.forEach((e, i) => {
+    const p = NODES[e[0]], c = NODES[e[1]];
+    const x1 = port(outs[e[0]], e[0], i, .6), y1 = p.y + p.h;
+    const x2 = port(ins[e[1]], e[1], i, .7), y2 = c.y;
+    const my = (y1 + y2) / 2;
+    const dom = p.dom ? ' dom' : '';
+    edges += `<path class="edge${dom}" data-p="${e[0]}" data-c="${e[1]}" id="${id}-e${i}" marker-end="url(#${id}-arr)" d="M${x1},${y1} C${x1},${my} ${x2},${my} ${x2},${y2 - 3}"/>`;
+  });
+  let nodes = '';
+  for (const name of ORDER) {
+    const n = NODES[name];
+    nodes += `<g class="node${n.dom ? ' dom' : ''}" id="${id}-n-${name}" data-name="${name}" transform="translate(${n.x - n.w / 2},${n.y})">
+      <rect class="box" width="${n.w}" height="${n.h}" rx="9"/>
+      <text class="nm" x="${n.w / 2}" y="${n.dom ? 16 : 20}" text-anchor="middle">${name}</text>
+      <text class="sub" x="${n.w / 2}" y="${n.dom ? 29 : 34}" text-anchor="middle">${n.sub}</text>
+      <rect class="track" x="8" y="${n.h - 7}" width="${n.w - 16}" height="3" rx="1.5" opacity="0"/>
+      <rect class="fill" x="8" y="${n.h - 7}" width="0" height="3" rx="1.5"/>
+      <g class="badge" transform="translate(${n.w - 4},2)"><circle r="9"/><text text-anchor="middle" y="3">GC</text></g>
+    </g>`;
+  }
+  return `<svg class="schema" id="${id}" viewBox="0 0 640 356" role="img" aria-label="Schema CNPJ com 10 tabelas e 12 relações">
+    <defs><marker id="${id}-arr" viewBox="0 0 8 8" refX="6" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L8,4 L0,8 z" fill="var(--muted)"/></marker></defs>
+    <text x="4" y="14" class="sub" style="font:10px 'JetBrains Mono',monospace;fill:var(--muted)">nível 0 · domínios</text>
+    <text x="4" y="150" class="sub" style="font:10px 'JetBrains Mono',monospace;fill:var(--muted)">nível 1</text>
+    <text x="4" y="290" class="sub" style="font:10px 'JetBrains Mono',monospace;fill:var(--muted)">nível 2</text>
+    <g class="edges">${edges}</g><g class="nodes">${nodes}</g></svg>`;
+}
+const node = (name, id = 'schema') => $(`#${id}-n-${name}`);
+const edgesOf = (pred, id = 'schema') => $$(`#${id} .edge`).filter(e => pred(e.dataset.p, e.dataset.c));
+
+async function drawEdges(paths, ms = 500, stagger = 70) {
+  await Promise.all(paths.map(async (p, i) => {
+    const L = p.getTotalLength();
+    p.style.strokeDasharray = L;
+    p.style.strokeDashoffset = L;
+    await wait(i * stagger);
+    await tween(ms, e => { p.style.strokeDashoffset = L * (1 - e); });
+    p.style.strokeDasharray = '';
+    p.style.strokeDashoffset = '';
+  }));
+}
+function fillNode(name, p, id = 'schema') {
+  const n = node(name, id), w = NODES[name].w - 16;
+  $('.track', n).setAttribute('opacity', 1);
+  $('.fill', n).setAttribute('width', (w * p).toFixed(1));
+}
+
+/* ---------- linha do tempo de fases (Independent, 2,5%) ---------- */
+const IND_PHASES = [
+  ['load', 8.46], ['init', 1.33], ['preprocess', 83.87], ['fit', 204.54], ['sample', 154.24], ['validate', 16.38], ['quality', 8.58],
+];
+const IND_TOTAL = 477.4;
+const IND_MEM = { load: 4.26, init: 4.26, preprocess: 7.34, fit: 7.36, sample: 7.36, validate: 7.36, quality: 7.36 };
+function timelineHTML() {
+  const segs = IND_PHASES.map(([n, t]) => `<div class="seg" data-ph="${n}" style="flex:${t}"><b></b></div>`).join('');
+  const labs = IND_PHASES.map(([n, t]) => `<span style="flex:${t}">${t > 40 ? n + ' ' + nf(t, 0) + ' s' : ''}</span>`).join('');
+  return `<div class="box2">
+    <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap">
+      <span class="small"><b>Fases medidas</b> <span class="muted">· amostra 2,5% · 5.572.002 linhas</span></span>
+      <span class="big" id="ind-clock">0,0 s</span>
+    </div>
+    <div class="tl" style="margin-top:8px">${segs}</div>
+    <div class="tl-labels">${labs}</div>
+    <div style="margin-top:12px;display:flex;justify-content:space-between;align-items:baseline" class="small"><span><b>Memória de pico</b> <span class="muted">(footprint físico)</span></span><span class="mono" id="mem-v">0,00 GB</span></div>
+    <div class="gauge" style="margin-top:6px"><b id="mem-b"></b><div class="mark" style="left:80%" title="corte de segurança 12,8 GB"></div></div>
+    <div class="gauge-labels"><span>0</span><span style="margin-left:auto;margin-right:6%">corte 12,8 GB</span><span>16 GB RAM</span></div>
+  </div>`;
+}
+let indMemNow = 0;
+function setMem(gb) {
+  indMemNow = gb;
+  $('#mem-b').style.width = (gb / 16 * 100) + '%';
+  $('#mem-v').textContent = nf(gb, 2) + ' GB';
+}
+async function runPhase(name, ms) {
+  const idx = IND_PHASES.findIndex(p => p[0] === name);
+  const before = IND_PHASES.slice(0, idx).reduce((a, p) => a + p[1], 0);
+  const dur = IND_PHASES[idx][1];
+  const b = $(`.tl .seg[data-ph="${name}"] > b`);
+  const m0 = indMemNow, m1 = IND_MEM[name];
+  await tween(ms, (e, p) => {
+    b.style.width = (p * 100) + '%';
+    $('#ind-clock').textContent = nf(before + dur * p, 1) + ' s';
+    setMem(m0 + (m1 - m0) * e);
+  }, linear);
+}
+function presetPhases(upTo) {
+  let t = 0;
+  for (const [n, d] of IND_PHASES) {
+    $(`.tl .seg[data-ph="${n}"] > b`).style.width = '100%';
+    t += d;
+    setMem(IND_MEM[n]);
+    if (n === upTo) break;
+  }
+  $('#ind-clock').textContent = nf(t, 1) + ' s';
+}
+
+/* ============================== CENAS ============================== */
+const SCENES = [];
+const scene = (title, who, run) => SCENES.push({ title, who, run });
+
+/* 0 · cenário */
+scene('O cenário', 'none', async () => {
+  $('#term-title').textContent = 'python · SDVReal';
+  viz.innerHTML = `<div class="viz-head"><span class="tag">Base CNPJ · variante <b>full</b></span><span class="small muted">Receita Federal · release 2026-09</span></div>
+    ${schemaSVG()}<div class="chips" id="chips"></div>`;
+  $$('.node').forEach(n => n.classList.add('off'));
+  $$('.edge').forEach(e => e.style.opacity = 0);
+  await say('Um engenheiro de dados precisa de uma <b>massa sintética da base CNPJ</b> para QA, testes de carga e desenvolvimento. A exigência: manter a <b>integridade referencial</b> entre todas as tabelas.', 'Contexto');
+  await type('from sdv.metadata import Metadata');
+  await type('import dataset  # benchmarks/cnpj/dataset.py');
+  await type("data, metadata = dataset.load(sample_dir, 0.025, 'full')");
+  for (const name of ORDER) { node(name).classList.remove('off'); await wait(110); }
+  $$('.edge').forEach(e => e.style.opacity = '');
+  await drawEdges($$('.edge'), 450, 60);
+  await type('len(metadata.tables), len(metadata.relationships)');
+  out('(10, 12)');
+  const chips = $('#chips');
+  for (const c of ['<b>10</b> tabelas', '<b>12</b> relações', 'profundidade <b>3</b>', '<b>222 M</b> linhas na base completa']) {
+    chips.insertAdjacentHTML('beforeend', `<span class="chip">${c}</span>`); await wait(220);
+  }
+  await type('sum(len(df) for df in data.values())  # amostra de 2,5%');
+  out('5572002');
+  chips.insertAdjacentHTML('beforeend', '<span class="chip"><b>5,57 M</b> linhas na amostra</span>');
+  await say('O schema tem armadilhas reais: <code>socios</code> aponta <b>duas FKs</b> para <code>qualificacoes</code>, <code>simples</code> é <b>1-para-1</b> com <code>empresas</code> e <code>socios</code> não tem PK. As tabelas de domínio formam o nível 0, então a profundidade é 3.', 'Contexto');
+  edgesOf((p, c) => p === 'qualificacoes' && c === 'socios').forEach(e => e.classList.add('learn'));
+  await wait(3600);
+});
+
+/* 1 · HMA: a trava */
+scene('HMA · a trava do schema', 'hma', async () => {
+  viz.innerHTML = `<div class="viz-head"><span class="tag hma">HMASynthesizer</span><span class="small muted">o caminho padrão do SDV Community</span></div>
+    ${schemaSVG()}<div class="chips" id="chips"></div>`;
+  await say('O caminho natural: usar o <code>HMASynthesizer</code>, o synthesizer multi-tabela do SDV Community.', 'HMA');
+  await type('from sdv.multi_table import HMASynthesizer');
+  await type("synth = HMASynthesizer(metadata, locales=['pt_BR'])");
+  await wait(350);
+  out('Traceback (most recent call last):\n  File "sdv/multi_table/hma.py", line 261, in __init__\n    raise SynthesizerInputError(\nSynthesizerInputError: ... Please use SDV Enterprise to model this schema ...', 'err');
+  $('#schema').classList.add('shake');
+  $$('.node').forEach(n => n.classList.add('bad'));
+  const chips = $('#chips');
+  chips.insertAdjacentHTML('beforeend', '<span class="chip bad">✕ 10 tabelas &gt; limite de 5</span>');
+  await wait(250);
+  chips.insertAdjacentHTML('beforeend', '<span class="chip bad">✕ profundidade 3 &gt; limite de 2</span>');
+  await say('A trava em <code>hma.py:261</code> recusa qualquer schema com <b>mais de 5 tabelas</b> ou <b>profundidade maior que 2</b>. Ela olha só a contagem, não o custo real, e a única saída sugerida é o SDV Enterprise.', 'HMA');
+  await wait(4200);
+  $$('.node').forEach(n => n.classList.remove('bad'));
+  await say('Sem alternativa no Community, o engenheiro <b>corta o schema</b>: as 6 tabelas de domínio deixam de ser tabelas e viram colunas categóricas (variante <code>core</code>).', 'HMA');
+  await type('# workaround: descartar as tabelas de domínio');
+  for (const name of ORDER.filter(n => NODES[n].dom)) { node(name).classList.add('cut'); await wait(120); }
+  $$('.edge.dom').forEach(e => e.classList.add('cut'));
+  ['empresas', 'simples', 'socios', 'estabelecimentos'].forEach(n => node(n).classList.add('hma'));
+  edgesOf(p => p === 'empresas').forEach(e => e.classList.add('hma'));
+  await type("data, metadata = dataset.load(sample_dir, 0.0001, 'core')  # 30.065 linhas");
+  await type("synth = HMASynthesizer(metadata, locales=['pt_BR'])");
+  out('✓ aceito: 4 tabelas, 3 relações, profundidade 2', 'ok');
+  chips.innerHTML = '<span class="chip">variante <b>core</b>: 4 tabelas</span><span class="chip">amostra <b>0,01%</b> · 30.065 linhas</span>';
+  await say('Para caber, o engenheiro também reduz o volume: <b>30 mil linhas</b>, ou 0,01% da amostra preparada.', 'HMA');
+  await wait(2800);
+});
+
+/* 2 · HMA: fit e sample */
+scene('HMA · fit e sample', 'hma', async () => {
+  $('#term-title').textContent = 'python · HMA · variante core';
+  const N = 300;
+  viz.innerHTML = `<div class="viz-head"><span class="tag hma">HMASynthesizer · por dentro</span><span class="small muted">variante core · 30.065 linhas</span></div>
+    <div class="row">
+      <div class="box2">
+        <div class="small muted" id="hma-phase">fase</div>
+        <div class="clock" id="hma-clock">00:00,0</div>
+        <div class="speedup" id="hma-speed">relógio acelerado</div>
+      </div>
+      <div class="box2 small">
+        <dl class="kv">
+          <dt>fit</dt><dd id="kv-fit" class="mono">—</dd>
+          <dt>sample</dt><dd id="kv-sample" class="mono">—</dd>
+          <dt>total</dt><dd id="kv-total" class="mono">—</dd>
+        </dl>
+      </div>
+    </div>
+    <div class="box2">
+      <div class="small" style="margin-bottom:8px"><b id="grid-title">Uma GaussianCopula por linha do pai</b> <span class="muted" id="grid-sub">· ≈ 7 mil empresas, cada quadrado ≈ 23</span></div>
+      <div class="grid-cells" id="cells">${'<i></i>'.repeat(N)}</div>
+      <div class="small muted" style="margin-top:8px" id="grid-code"><code>_get_extension</code> · <code>hma.py:341</code> · O(número de pais)</div>
+    </div>
+    <div class="chips" id="chips"></div>`;
+  const cells = $$('#cells i');
+  const setClock = (s, ratio) => { $('#hma-clock').textContent = clock(s); if (ratio) $('#hma-speed').textContent = `relógio acelerado ≈ ${nf(ratio, 0)}×`; };
+
+  await say('No <b>fit</b>, o HMA ajusta uma <b>GaussianCopula para cada linha do pai</b> e achata os parâmetros dos filhos em colunas do pai: n(n−1)/2 correlações mais k·n parâmetros por relação, em cascata na profundidade.', 'HMA');
+  await type('synth.fit(data)');
+  $('#hma-phase').textContent = 'fit · ajustando uma cópula por empresa';
+  const FIT_MS = 4200;
+  await tween(FIT_MS, (e, p) => {
+    const k = Math.floor(p * N);
+    for (let i = 0; i < k; i++) cells[i].className = 'on';
+    setClock(42.66 * p, 42.66 / (FIT_MS / 1000));
+  }, linear);
+  $('#kv-fit').textContent = '42,66 s';
+  out('fit: 42,66 s', 'out');
+
+  await say('No <b>sample</b>, o <code>BaseHierarchicalSampler</code> percorre os pais com <code>iterrows()</code>, faz um sampling separado para cada um e acumula tudo com <code>pd.concat</code> em loop.', 'HMA');
+  await type("synthetic = synth.sample('empresas', len(data['empresas']))");
+  cells.forEach(c => c.className = '');
+  $('#grid-title').textContent = 'Um sampling separado por empresa';
+  $('#grid-sub').textContent = '· loop Python, linha a linha';
+  $('#grid-code').innerHTML = '<code>_sample_children</code> · <code>hierarchical_sampler.py:258</code> · iterrows + pd.concat';
+  $('#hma-phase').textContent = 'sample · iterrows() por empresa';
+  const SAMPLE_MS = 9000;
+  await tween(SAMPLE_MS, (e, p) => {
+    const k = Math.floor(p * N);
+    for (let i = 0; i < k; i++) cells[i].className = 'on2';
+    setClock(42.66 + 776.04 * p, 776.04 / (SAMPLE_MS / 1000));
+  }, linear);
+  setClock(833.1);
+  $('#kv-sample').textContent = '776,04 s';
+  $('#kv-total').innerHTML = '<b>833,1 s</b> (≈ 14 min)';
+  out('sample: 776,04 s', 'out');
+  out('total: 833,1 s (≈ 14 min) para 30.065 linhas', 'warn');
+  $('#chips').insertAdjacentHTML('beforeend', '<span class="chip">sample = <b>93%</b> do tempo</span>');
+
+  await say('O engenheiro tenta um pouco mais de volume: <b>119 mil linhas</b> (0,05%). O fit sozinho leva 236 s; o sampling, projetado em ~3.000 s, estoura o timeout de 30 minutos.', 'HMA');
+  await type("data, metadata = dataset.load(sample_dir, 0.0005, 'core')  # 118.889 linhas");
+  await type("synth.fit(data); synth.sample('empresas', len(data['empresas']))");
+  cells.forEach(c => c.className = '');
+  $('#kv-fit').textContent = '236,1 s'; $('#kv-sample').textContent = '…'; $('#kv-total').textContent = '…';
+  $('#hma-phase').textContent = 'fit + sample · 118.889 linhas';
+  await tween(6000, (e, p) => {
+    const k = Math.floor(Math.min(1, p * 1800 / 3000) * N);
+    for (let i = 0; i < k; i++) cells[i].className = i < N * 236 / 3000 ? 'on' : 'on2';
+    setClock(1800 * p, 1800 / 6);
+  }, linear);
+  $('#hma-clock').classList.add('bad');
+  $('#hma-phase').textContent = 'TIMEOUT · processo encerrado';
+  $('#kv-sample').textContent = 'não terminou'; $('#kv-total').innerHTML = '<span class="n">&gt; 1.800 s</span>';
+  out('TIMEOUT após 1.800 s: subprocesso encerrado no sampling', 'err');
+  $('#chips').insertAdjacentHTML('beforeend', '<span class="chip bad">✕ 119 mil linhas: não terminou em 30 min</span>');
+  await say('Resultado do caminho padrão: <b>schema cortado</b>, <b>volume mínimo</b> e, mesmo assim, a cauda real se perde. O máximo de estabelecimentos por empresa cai de <b>7.903 para 127</b>.', 'HMA');
+  await wait(3800);
+});
+
+/* 3 · Independent: fit */
+scene('Independent · fit', 'ind', async () => {
+  $('#term-title').textContent = 'python · Independent · variante full';
+  viz.innerHTML = `<div class="viz-head"><span class="tag ind">IndependentSynthesizer</span><span class="small muted">schema completo, sem cortes</span></div>
+    ${schemaSVG()}${timelineHTML()}<div class="chips" id="chips"></div>`;
+  indMemNow = 0;
+  await say('Agora com o <code>IndependentSynthesizer</code>: o <b>mesmo schema completo</b> que o HMA recusou, com 10 tabelas, 12 relações, profundidade 3 e <b>185× mais linhas</b> que o teste do HMA.', 'Independent');
+  await type('from sdv.multi_table import IndependentSynthesizer');
+  await type("data, metadata = dataset.load(sample_dir, 0.025, 'full')  # 5.572.002 linhas");
+  await runPhase('load', 700);
+  await type("synth = IndependentSynthesizer(metadata, locales=['pt_BR'])");
+  await runPhase('init', 250);
+  out('✓ aceito: sem limite de tabelas ou de profundidade', 'ok');
+  $('#chips').insertAdjacentHTML('beforeend', '<span class="chip ok">✓ 10 tabelas · profundidade 3</span>');
+  await type('synth.fit(data)');
+  await say('<b>Fit por tabela.</b> Primeiro o RDT pré-processa cada tabela. Depois cada uma recebe o seu próprio synthesizer single-table (GaussianCopula por padrão), treinado <b>sem as colunas de FK</b>. É 1 modelo por tabela, e não 1 por linha do pai.', 'Independent');
+  const prep = runPhase('preprocess', 2600);
+  for (const n of ORDER) { node(n).classList.add('prep'); await wait(140); }
+  await prep;
+  const fit = runPhase('fit', 4200);
+  for (const n of ORDER) {
+    const g = node(n); g.classList.remove('prep'); g.classList.add('fit');
+    $('.badge', g).classList.add('on');
+    await wait(260);
+  }
+  await say('<b>Fit por relação.</b> Para cada FK, o synthesizer guarda só dois números: a <b>distribuição de filhos por pai</b> (<code>value_counts().reindex(...)</code> → <code>np.bincount</code>) e a <b>taxa de FK nula</b>. Tudo vetorizado, O(linhas).', 'Independent');
+  const es = $$('.edge');
+  for (const e of es) { e.classList.add('learn'); await wait(150); }
+  await fit;
+  out('preprocess: 83,87 s · fit: 204,54 s', 'out');
+  out('  ↳ empresas → estabelecimentos: média 1,053 filho/pai · máx 7.903', 'note');
+  out('  ↳ empresas → socios: média 0,405 filho/pai', 'note');
+  out('  ↳ simples: relação 1-para-1 (FK = PK do filho)', 'note');
+  $('#chips').insertAdjacentHTML('beforeend', '<span class="chip ind">10 modelos · 12 distribuições de cardinalidade</span>');
+  await wait(2600);
+});
+
+/* 4 · Independent: sample */
+scene('Independent · sample', 'ind', async () => {
+  viz.innerHTML = `<div class="viz-head"><span class="tag ind">IndependentSynthesizer</span><span class="small muted">sampling + conexão das tabelas</span></div>
+    ${schemaSVG()}${timelineHTML()}<div class="chips" id="chips"></div>`;
+  ORDER.forEach(n => { node(n).classList.add('fit'); $('.badge', node(n)).classList.add('on'); });
+  presetPhases('fit');
+  await say('<b>Sampling.</b> Cada tabela é amostrada <b>de forma independente</b>, pelo seu próprio modelo, ao mesmo tempo, sem loop por pai.', 'Independent');
+  await type("synthetic = synth.sample('empresas', len(data['empresas']))");
+  const sample = runPhase('sample', 6400);
+  await tween(2600, e => ORDER.forEach((n, i) => fillNode(n, Math.min(1, e * (1 + (i % 3) * .15)))));
+  await say('Depois, <code>_connect_tables</code> percorre o grafo <b>em largura a partir das raízes</b> e atribui as FKs: as contagens reais são <b>reamostradas sem reposição</b>, <code>np.repeat(parent_pk, counts)</code> gera as chaves, os nulos entram na taxa aprendida e o resultado é embaralhado.', 'Independent');
+  const lvl1 = edgesOf((p, c) => c === 'empresas');
+  const lvl2 = edgesOf((p, c) => c !== 'empresas');
+  lvl1.forEach(e => e.classList.add('flow'));
+  out('  ↳ nível 1: FKs de empresas (naturezas, qualificacoes)', 'note');
+  await wait(1400);
+  lvl2.forEach(e => e.classList.add('flow'));
+  out('  ↳ nível 2: FKs de estabelecimentos, socios, simples', 'note');
+  out('  ↳ simples (1-para-1): chaves do pai sorteadas sem reposição', 'note');
+  await sample;
+  $$('.edge').forEach(e => { e.classList.remove('flow'); e.classList.add('learn'); });
+  out('sample: 154,24 s', 'out');
+  await type('metadata.validate_data(synthetic)');
+  await runPhase('validate', 600);
+  out('✓ integridade referencial: 100% das FKs válidas', 'ok');
+  await runPhase('quality', 400);
+  out('total 477,4 s · pico 7,36 GB · KS estab./empresa 0,000 · máx 7.903 / 7.903', 'warn');
+  const chips = $('#chips');
+  for (const c of ['<span class="chip ok">✓ integridade 100%</span>', '<span class="chip ind">KS filhos/pai <b>0,000</b></span>', '<span class="chip ind">cauda: <b>7.903</b> / 7.903</span>', '<span class="chip">fit 43% · sample 33% · preprocess 18%</span>']) {
+    chips.insertAdjacentHTML('beforeend', c); await wait(200);
+  }
+  await say('<b>5,57 milhões de linhas reais em 8 minutos</b>, num schema que o HMA nem aceita, com a distribuição de filhos por pai idêntica à real, inclusive a empresa com 7.903 estabelecimentos.', 'Independent');
+  await wait(3800);
+});
+
+/* 5 · Corrida */
+scene('Corrida · 30 mil linhas', 'both', async () => {
+  $('#term-title').textContent = 'zsh · benchmarks/cnpj/run.py';
+  const SIM = 833.1, MS = 15000;
+  const lanes = {
+    ind: { total: 16.1, ph: [['preprocess', 2.23], ['fit', 1.83], ['sample', 4.49], ['outras', 7.55]] },
+    hma: { total: 833.1, ph: [['preprocess', 4.36], ['fit', 42.66], ['sample', 776.04], ['outras', 10.04]] },
+  };
+  const laneHTML = (k, label, sub) => {
+    let acc = 0, ticks = '';
+    for (const [, t] of lanes[k].ph) { acc += t; ticks += `<i class="tick" style="left:${acc / SIM * 100}%"></i>`; }
+    return `<div class="lane"><div class="name">${label}<small>${sub}</small></div>
+      <div class="track"><b id="tr-${k}" style="background:var(--${k})"></b>${ticks}</div><div class="t" id="t-${k}">0,0 s</div></div>`;
+  };
+  viz.innerHTML = `<div class="viz-head"><span class="tag">Mesmos dados, mesma máquina</span><span class="small muted">variante core · 4 tabelas · 30.065 linhas</span></div>
+    <div class="box2" style="display:flex;flex-direction:column;gap:12px">
+      ${laneHTML('ind', 'Independent', '4 tabelas')}
+      ${laneHTML('hma', 'HMA', '4 tabelas')}
+      <div class="small muted" id="race-note">relógio acelerado ≈ ${nf(SIM / (MS / 1000), 0)}× · escala comum de 0 a 833 s</div>
+    </div>
+    <table class="cmp" id="ph-table">
+      <thead><tr><th>Fase</th><th>Independent</th><th>HMA</th><th>Razão</th></tr></thead>
+      <tbody>
+        <tr class="hid"><td>preprocess</td><td class="num">2,23 s</td><td class="num">4,36 s</td><td class="num">2×</td></tr>
+        <tr class="hid"><td>fit</td><td class="num">1,83 s</td><td class="num">42,66 s</td><td class="num win">23×</td></tr>
+        <tr class="hid"><td>sample</td><td class="num">4,49 s</td><td class="num">776,04 s</td><td class="num win">173×</td></tr>
+        <tr class="hid"><td><b>total</b></td><td class="num"><b>16,1 s</b> · 0,92 GB</td><td class="num"><b>833,1 s</b> · 1,27 GB</td><td class="num win">52×</td></tr>
+      </tbody>
+    </table>
+    <table class="cmp" id="q-table">
+      <thead><tr><th>Qualidade</th><th>Real</th><th>Independent</th><th>HMA</th></tr></thead>
+      <tbody>
+        <tr class="hid"><td>KS estabelecimentos/empresa</td><td>—</td><td class="num win">0,000</td><td class="num">0,031</td></tr>
+        <tr class="hid"><td>KS sócios/empresa</td><td>—</td><td class="num win">0,000</td><td class="num">0,140</td></tr>
+        <tr class="hid"><td>Máx. estabelecimentos/empresa</td><td class="num">7.903</td><td class="num win">7.903</td><td class="num">127</td></tr>
+        <tr class="hid"><td>Máx. sócios/empresa</td><td class="num">41</td><td class="num win">41</td><td class="num">3</td></tr>
+        <tr class="hid"><td>Empresas com exatamente 1 matriz</td><td class="num">100%</td><td class="num">45,9%</td><td class="num win">79,5%</td></tr>
+      </tbody>
+    </table>`;
+  await say('Para comparar de forma justa, os dois rodam no <b>schema que o HMA aceita</b> (core) e no volume em que ele termina: 30 mil linhas, cada um num subprocesso isolado.', 'Comparação');
+  await type('python benchmarks/cnpj/run.py --synthesizer independent \\\n  --variant core --fractions 0.0001', '$ ');
+  await type('python benchmarks/cnpj/run.py --synthesizer hma \\\n  --variant core --fractions 0.0001 --timeout 1800', '$ ');
+  const printed = { ind: 0, hma: 0 };
+  const cum = k => { let a = 0; return lanes[k].ph.map(([n, t]) => [n, t, (a += t)]); };
+  const cums = { ind: cum('ind'), hma: cum('hma') };
+  await tween(MS, (e, p) => {
+    const t = SIM * p;
+    for (const k of ['ind', 'hma']) {
+      const L = lanes[k], v = Math.min(t, L.total);
+      $('#tr-' + k).style.width = (v / SIM * 100) + '%';
+      $('#t-' + k).innerHTML = v >= L.total ? `<span class="done-flag">✓</span> ${nf(L.total, 1)} s` : nf(v, 1) + ' s';
+      while (printed[k] < cums[k].length && t >= cums[k][printed[k]][2]) {
+        const [n, d] = cums[k][printed[k]];
+        if (n !== 'outras') out(`[${k === 'ind' ? 'independent' : 'hma'}] PHASE ${n} ${d.toFixed(2)}s`, k === 'ind' ? 'note' : 'warn');
+        printed[k]++;
+      }
+    }
+    if (t > 40 && !$('#race-note').dataset.s) {
+      $('#race-note').dataset.s = 1;
+      say('O Independent terminou em <b>16,1 s</b>. O HMA ainda está no fit, e o sampling dele, com <code>iterrows()</code> por empresa, vai levar quase 13 minutos.', 'Comparação');
+    }
+  }, linear);
+  out('[independent] RESULT total 16,1 s · integridade ✓', 'ok');
+  out('[hma]         RESULT total 833,1 s · integridade ✓', 'ok');
+  await say('<b>52× mais rápido</b> no total, <b>23×</b> no fit e <b>173×</b> no sample. A diferença é estrutural: 1 modelo por tabela contra 1 modelo por linha do pai.', 'Comparação');
+  for (const tr of $$('#ph-table tbody tr')) { tr.classList.remove('hid'); await wait(380); }
+  await wait(2200);
+  await say('Na qualidade, o Independent reproduz a cardinalidade <b>exatamente</b> (KS 0,000, cauda 7.903). O HMA respeita melhor a regra de uma matriz por empresa (79,5% contra 45,9%), porque condiciona os filhos ao pai.', 'Comparação');
+  for (const tr of $$('#q-table tbody tr')) { tr.classList.remove('hid'); await wait(420); }
+  await wait(4200);
+});
+
+/* 6 · Escala */
+scene('Escala · CNPJ real', 'ind', async () => {
+  $('#term-title').textContent = 'zsh · escada de frações';
+  const W = 600, H = 270, m = { l: 48, r: 92, t: 14, b: 34 };
+  const x = v => m.l + (Math.log10(v) - Math.log10(2e4)) / (Math.log10(2e7) - Math.log10(2e4)) * (W - m.l - m.r);
+  const y = v => H - m.b - (Math.log10(v) - 1) / (Math.log10(3000) - 1) * (H - m.t - m.b);
+  const full = [[237237, 26.9, '0,1%'], [570123, 54.3, '0,25%'], [1125695, 101.7, '0,5%'], [2239828, 202.5, '1%'], [5572002, 477.4, '2,5%']];
+  const core = [[30065, 16.1, '0,01%'], [118889, 37.9, '0,05%'], [229829, 58.9, '0,1%'], [562715, 120.9, '0,25%']];
+  const xt = [[3e4, '30 mil'], [1e5, '100 mil'], [1e6, '1 M'], [1e7, '10 M']];
+  const yt = [[10, '10 s'], [100, '100 s'], [1000, '1.000 s']];
+  const path = pts => pts.map((p, i) => (i ? 'L' : 'M') + x(p[0]).toFixed(1) + ',' + y(p[1]).toFixed(1)).join(' ');
+  viz.innerHTML = `<div class="viz-head"><span class="tag ind">Escala com dados reais</span><span class="small muted">tempo total (fit + sample + validação) por número de linhas · eixos log</span></div>
+    <div class="chart-wrap">
+      <svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Tempo total por número de linhas">
+        <g class="grid">${yt.map(([v]) => `<line x1="${m.l}" x2="${W - m.r}" y1="${y(v)}" y2="${y(v)}"/>`).join('')}</g>
+        <g class="axis">
+          <line x1="${m.l}" x2="${W - m.r}" y1="${H - m.b}" y2="${H - m.b}"/>
+          ${xt.map(([v, l]) => `<text x="${x(v)}" y="${H - m.b + 16}" text-anchor="middle">${l}</text>`).join('')}
+          ${yt.map(([v, l]) => `<text x="${m.l - 6}" y="${y(v) + 3}" text-anchor="end">${l}</text>`).join('')}
+          <text x="${(W - m.r + m.l) / 2}" y="${H - 2}" text-anchor="middle">linhas</text>
+        </g>
+        <line x1="${m.l}" x2="${W - m.r}" y1="${y(1800)}" y2="${y(1800)}" stroke="var(--bad)" stroke-dasharray="4 4" stroke-width="1.2"/>
+        <text x="${W - m.r + 6}" y="${y(1800) + 4}" class="lbl" style="fill:var(--bad)">timeout 30 min</text>
+        <path id="ln-full" class="series-ind" d="${path(full)}"/>
+        <path id="ln-core" class="series-ind2" d="${path(core)}"/>
+        <g id="pts"></g>
+        <g id="hma-pts" opacity="0">
+          <circle class="pt" cx="${x(30065)}" cy="${y(833.1)}" r="5.5" fill="var(--hma)" data-tip="HMA · core · 30.065 linhas · 833,1 s"/>
+          <path d="M${x(118889) - 6},${y(1800) + 4} L${x(118889)},${y(1800) - 8} L${x(118889) + 6},${y(1800) + 4} Z" fill="var(--hma)"/>
+          <circle class="pt" cx="${x(118889)}" cy="${y(1800)}" r="9" fill="transparent" stroke="transparent" data-tip="HMA · core · 118.889 linhas · > 1.800 s (timeout)"/>
+          <text x="${x(30065) + 10}" y="${y(833.1) + 4}" class="lbl">HMA</text>
+        </g>
+        <g id="cut-pt" opacity="0">
+          <text x="${x(11127857)}" y="${y(850.8) + 5}" text-anchor="middle" style="font:700 15px Inter;fill:var(--bad)">✕</text>
+          <circle class="pt" cx="${x(11127857)}" cy="${y(850.8)}" r="9" fill="transparent" stroke="transparent" data-tip="5% · 11,1 M linhas · interrompida aos 850,8 s: memória > 12,86 GB"/>
+          <text x="${x(11127857) + 10}" y="${y(850.8) - 8}" class="lbl" style="fill:var(--bad)">5%: memória</text>
+        </g>
+        <text id="lb-full" x="${x(5572002) + 9}" y="${y(477.4) + 4}" class="lbl" opacity="0">Independent · full</text>
+        <text id="lb-core" x="${x(30065) - 4}" y="${y(16.1) + 18}" class="lbl" opacity="0">Independent · core</text>
+      </svg>
+      <div class="tooltip" id="tip"></div>
+    </div>
+    <div class="row">
+      <div class="box2">
+        <div class="small"><b>Memória de pico</b> <span class="muted">· Independent full</span></div>
+        <div class="membars" id="membars"></div>
+      </div>
+      <div style="display:grid;gap:8px;align-content:start" id="stats"></div>
+    </div>
+    <details><summary>Ver dados em tabela</summary>
+      <table class="cmp" style="margin-top:6px"><thead><tr><th>Amostra</th><th>Linhas</th><th>Tempo</th><th>Memória</th></tr></thead><tbody>
+      ${full.map(([r, t, l], i) => `<tr><td>${l} (full)</td><td class="num">${nf(r)}</td><td class="num">${nf(t, 1)} s</td><td class="num">${['1,37', '1,38', '2,13', '3,42', '7,36'][i]} GB</td></tr>`).join('')}
+      <tr><td>5% (full)</td><td class="num">11.127.857</td><td class="num">interrompida 850,8 s</td><td class="num">12,86 GB (corte)</td></tr>
+      ${core.map(([r, t, l]) => `<tr><td>${l} (core)</td><td class="num">${nf(r)}</td><td class="num">${nf(t, 1)} s</td><td class="num">—</td></tr>`).join('')}
+      <tr><td>HMA 0,01% (core)</td><td class="num">30.065</td><td class="num">833,1 s</td><td class="num">1,27 GB</td></tr>
+      <tr><td>HMA 0,05% (core)</td><td class="num">118.889</td><td class="num">&gt; 1.800 s (timeout)</td><td class="num">2,32 GB</td></tr>
+      </tbody></table></details>`;
+  // tooltip
+  const tip = $('#tip'), wrap = $('.chart-wrap');
+  wrap.addEventListener('mouseover', ev => {
+    const t = ev.target.closest('[data-tip]'); if (!t) return;
+    tip.textContent = t.dataset.tip; tip.style.opacity = 1;
+  });
+  wrap.addEventListener('mousemove', ev => {
+    const r = wrap.getBoundingClientRect();
+    const left = Math.min(ev.clientX - r.left + 12, r.width - tip.offsetWidth - 4);
+    tip.style.left = Math.max(0, left) + 'px'; tip.style.top = (ev.clientY - r.top - 34) + 'px';
+  });
+  wrap.addEventListener('mouseout', ev => { if (ev.target.closest('[data-tip]')) tip.style.opacity = 0; });
+
+  const mem = [['0,1%', 1.37], ['0,25%', 1.38], ['0,5%', 2.13], ['1%', 3.42], ['2,5%', 7.36], ['5%', 12.86]];
+  $('#membars').innerHTML = mem.map(([l, v], i) => `<div class="mb${i === 5 ? ' cut' : ''}"><div class="area"><span class="v" style="opacity:0;bottom:calc(${v / 16 * 100}% + 2px)">${i === 5 ? '✕ ' : ''}${nf(v, 2)}</span><b data-h="${v / 16 * 100}"></b></div><span>${l}</span></div>`).join('')
+    + '<div class="ceil"><span>16 GB RAM</span></div>';
+
+  const pathLen = p => { const L = p.getTotalLength(); p.style.strokeDasharray = L; p.style.strokeDashoffset = L; return L; };
+  const lf = $('#ln-full'), lc = $('#ln-core');
+  const Lf = pathLen(lf), Lc = pathLen(lc);
+
+  await say('A escada completa com o <b>schema full</b>: de 237 mil a 5,57 milhões de linhas reais do CNPJ, com 10 tabelas e 12 relações.', 'Escala');
+  await type('python benchmarks/cnpj/run.py --synthesizer independent \\\n  --variant full --fractions 0.001 0.0025 0.005 0.01 0.025 0.05', '$ ');
+  const pts = $('#pts');
+  const bars = $$('#membars .mb');
+  for (let i = 0; i < full.length; i++) {
+    const [r, t, l] = full[i];
+    if (i) await tween(650, e => { lf.style.strokeDashoffset = Lf * (1 - (i - 1 + e) / (full.length - 1)); });
+    pts.insertAdjacentHTML('beforeend', `<circle class="pt" cx="${x(r)}" cy="${y(t)}" r="5" fill="var(--ind)" data-tip="Independent · full · ${l} · ${nf(r)} linhas · ${nf(t, 1)} s"/>`);
+    const b = $('b', bars[i]); b.style.height = b.dataset.h + '%'; b.style.opacity = 1; $('.v', bars[i]).style.opacity = 1;
+    out(`RESULT ${l.padEnd(5)} ${nf(r).padStart(9)} linhas · ${nf(t, 1).padStart(5)} s · ${nf(mem[i][1], 2)} GB · KS 0,000 · ✓`, 'ok');
+    await wait(250);
+  }
+  $('#lb-full').setAttribute('opacity', 1);
+  await wait(500);
+  $('#cut-pt').setAttribute('opacity', 1);
+  const b5 = $('b', bars[5]); b5.style.height = b5.dataset.h + '%'; b5.style.opacity = 1; $('.v', bars[5]).style.opacity = 1;
+  out('5%   11.127.857 linhas · interrompida aos 850,8 s · footprint 12,86 GB > limite', 'err');
+  await say('O tempo cresce de forma <b>linear</b> (tempo ∝ linhas<sup>0,91</sup>, ~86 µs por linha). O limite é a <b>memória</b>: ~1,27 KB por linha, quase toda de pandas, RDT e GaussianCopula. Com 11,1 M linhas o footprint passa do corte de 12,8 GB.', 'Escala');
+  await wait(3200);
+  await tween(1400, e => { lc.style.strokeDashoffset = Lc * (1 - e); });
+  lc.style.strokeDasharray = ''; lc.style.strokeDashoffset = '';
+  core.forEach(([r, t, l]) => pts.insertAdjacentHTML('beforeend', `<circle class="pt" cx="${x(r)}" cy="${y(t)}" r="4.5" style="fill:var(--surface);stroke:var(--ind);stroke-width:2" data-tip="Independent · core · ${l} · ${nf(r)} linhas · ${nf(t, 1)} s"/>`));
+  $('#lb-core').setAttribute('opacity', 1);
+  $('#hma-pts').setAttribute('opacity', 1);
+  await say('No schema core, o HMA aparece no gráfico com <b>um único ponto completo</b> (833 s, 30 mil linhas), acima de onde o Independent processa 1,1 M linhas de um schema 2,5× maior.', 'Escala');
+  const stats = $('#stats');
+  for (const [k, v] of [['Base completa', '222 M linhas'], ['Tempo projetado', '≈ 5,3 h'], ['Memória projetada', '≈ 280 GB ✕']]) {
+    stats.insertAdjacentHTML('beforeend', `<div class="stat" style="animation:pop .35s both"><div class="k">${k}</div><div class="v">${v}</div></div>`);
+    await wait(380);
+  }
+  await wait(1200);
+  await say('Projeção para a base inteira: o tempo cabe (~5,3 h), a memória não (~280 GB). Os caminhos são uma máquina maior, <b>fit em amostra com sampling em lotes</b> escrito em disco, ou tipos mais leves (categorias, strings Arrow).', 'Escala');
+  await wait(4200);
+});
+
+/* 7 · Trade-offs */
+scene('Trade-offs · quando usar', 'both', async () => {
+  $('#term-title').textContent = 'python · resumo';
+  const rows = [
+    ['Limite de schema', '<span class="y">nenhum</span>', '<span class="n">5 tabelas, prof. 2</span>'],
+    ['Ajustes de modelo', '<span class="y">1 por tabela</span>', '<span class="n">1 por tabela + 1 por linha de cada pai</span>'],
+    ['Atribuição de FK', '<span class="y">vetorizada, O(linhas)</span>', '<span class="n">loop Python por pai</span>'],
+    ['Distribuição de cada coluna', '<span class="y">✓</span>', '<span class="y">✓</span>'],
+    ['Correlações dentro da tabela', '<span class="y">✓</span>', '<span class="y">✓</span>'],
+    ['Cardinalidade e % de FK nula', '<span class="y">✓ exata</span>', '<span class="p">≈ aproximada</span>'],
+    ['Integridade referencial', '<span class="y">✓ por construção</span>', '<span class="y">✓</span>'],
+    ['Correlação entre tabelas', '<span class="n">✕</span>', '<span class="y">✓</span>'],
+    ['Regras entre linhas do mesmo pai', '<span class="n">✕</span>', '<span class="p">◐ parcial</span>'],
+  ];
+  viz.innerHTML = `<div class="viz-head"><span class="tag">O que muda para o engenheiro</span></div>
+    <table class="cmp" id="tt"><thead><tr><th>Propriedade</th><th style="color:var(--ind)">Independent</th><th style="color:var(--hma)">HMA</th></tr></thead>
+    <tbody>${rows.map(r => `<tr class="hid"><td>${r[0]}</td><td>${r[1]}</td><td>${r[2]}</td></tr>`).join('')}</tbody></table>
+    <div class="recs" id="recs"></div>`;
+  await say('O ganho de escala tem um preço explícito: o Independent <b>não modela correlação entre colunas de tabelas diferentes</b> (ex.: porte da empresa ↔ número de filiais).', 'Resumo');
+  await type('# o que cada synthesizer preserva');
+  for (const tr of $$('#tt tbody tr')) { tr.classList.remove('hid'); await wait(420); }
+  await wait(1600);
+  await say('Na prática: para massa de dados de QA, carga e desenvolvimento, schemas grandes ou volume acima de ~50 mil linhas, o <b>Independent</b>. Para análises que dependem de correlação entre tabelas em schemas pequenos, o HMA.', 'Resumo');
+  const recs = [
+    ['ind', 'Massa para QA, carga, dev', 'Independent, com integridade referencial garantida'],
+    ['ind', '> 5 tabelas ou profundidade > 2', 'Independent, o único que aceita'],
+    ['ind', '> ~50 mil linhas', 'Independent; o HMA passa de 30 min'],
+    ['hma', 'Correlação entre tabelas', 'HMA, se o schema for pequeno; ou Independent condicionado (próximo passo)'],
+    ['none', '1 matriz por empresa', 'Nenhum garante; precisa de constraint ou pós-processamento'],
+  ];
+  const box = $('#recs');
+  for (const [k, t, d] of recs) { box.insertAdjacentHTML('beforeend', `<div class="rec ${k}"><b>${t}</b>${d}</div>`); await wait(380); }
+  out('Independent: aceita o schema completo · 52× mais rápido em 30 mil linhas', 'ok');
+  out('             5,57 M linhas em 477 s · KS 0,000 · 100% FKs válidas', 'ok');
+  out('Limite:      memória (~1,27 KB/linha) · correlação entre tabelas', 'warn');
+  out('Próximos:    fit paralelo por tabela · sampling em lotes · condicionar filhos ao pai', 'note');
+  await wait(4500);
+  await say('Fim. Use <b>↺ Recomeçar</b> ou escolha uma cena acima. Para reproduzir: <code>make test-scale</code> e <code>benchmarks/cnpj/run.py</code> (seção 11 do relatório).', 'Fim');
+});
+
+/* ---------- controle ---------- */
+const nav = $('#chapters');
+SCENES.forEach((s, i) => {
+  const b = document.createElement('button');
+  b.dataset.who = s.who;
+  b.innerHTML = `<span class="dot"></span>${i + 1}. ${s.title}`;
+  b.addEventListener('click', () => playFrom(i));
+  nav.appendChild(b);
+});
+function updateNav() {
+  $$('#chapters button').forEach((b, i) => {
+    b.classList.toggle('active', i === S.scene);
+    b.classList.toggle('done', i < S.scene);
+    if (i === S.scene) b.setAttribute('aria-current', 'step'); else b.removeAttribute('aria-current');
+  });
+  $('#progress').style.width = ((S.scene + 1) / SCENES.length * 100) + '%';
+}
+const btnPlay = $('#btn-play');
+function setPaused(p) { S.paused = p; btnPlay.textContent = p ? '▶ Continuar' : '❚❚ Pausar'; }
+async function playFrom(i) {
+  S.run++;
+  setPaused(false);
+  try {
+    for (let k = i; k < SCENES.length; k++) {
+      S.scene = k; updateNav();
+      term.innerHTML = '';
+      await SCENES[k].run();
+      if (k < SCENES.length - 1) await wait(900);
+    }
+    btnPlay.textContent = '↺ Repetir';
+    S.ended = true;
+  } catch (e) { if (e !== CANCEL) console.error(e); }
+}
+btnPlay.addEventListener('click', () => {
+  if (S.ended) { S.ended = false; return playFrom(0); }
+  setPaused(!S.paused);
+});
+$('#btn-restart').addEventListener('click', () => { S.ended = false; playFrom(0); });
+$('#btn-prev').addEventListener('click', () => { S.ended = false; playFrom(Math.max(0, S.scene - 1)); });
+$('#btn-next').addEventListener('click', () => { S.ended = false; playFrom(Math.min(SCENES.length - 1, S.scene + 1)); });
+$('#speed').addEventListener('change', e => { S.speed = parseFloat(e.target.value); });
+document.addEventListener('keydown', e => {
+  if (e.target.closest('select, input, textarea')) return;
+  if (e.code === 'Space') { e.preventDefault(); btnPlay.click(); }
+  else if (e.key === 'ArrowRight') $('#btn-next').click();
+  else if (e.key === 'ArrowLeft') $('#btn-prev').click();
+});
+playFrom(0);
+})();
+</script>
+</body>
+</html>
