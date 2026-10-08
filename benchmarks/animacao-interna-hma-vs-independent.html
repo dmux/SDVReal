@@ -1,0 +1,1146 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Por dentro dos synthesizers</title>
+<meta name="description" content="Animação do funcionamento interno do HMASynthesizer e do IndependentSynthesizer do SDV: pilha de chamadas, código real e um mini-dataset passando por cada método.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  color-scheme: light;
+  --bg: #f4f3ef; --surface: #fcfcfb; --surface-2: #efeee9; --surface-3: #e6e5df;
+  --ink: #0b0b0b; --ink-2: #52514e; --muted: #7d7c77; --line: #dddcd5;
+  --hma: #eb6834; --hma-soft: #fbe2d7;
+  --ind: #2a78d6; --ind-soft: #dbe8f8;
+  --fk: #7a5cc7; --fk-soft: #ebe5f8;
+  --bad: #c62f2e; --bad-soft: #fbe1e0;
+  --good: #1a7f37; --good-soft: #dcf0e1;
+  --warn: #9a6700; --warn-soft: #fbf0d4;
+  --term-bg: #101216;
+  --shadow: 0 1px 2px rgba(0,0,0,.06), 0 8px 24px rgba(0,0,0,.06);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #121211; --surface: #1a1a19; --surface-2: #232321; --surface-3: #2c2c29;
+    --ink: #ffffff; --ink-2: #c3c2b7; --muted: #8f8e86; --line: #34332f;
+    --hma: #d95926; --hma-soft: #3a2218;
+    --ind: #3987e5; --ind-soft: #172a42;
+    --fk: #9085e9; --fk-soft: #262044;
+    --bad: #e66767; --bad-soft: #3b1c1c;
+    --good: #3fb950; --good-soft: #15301c;
+    --warn: #d29922; --warn-soft: #33280f;
+    --term-bg: #0b0c0f;
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.3);
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #121211; --surface: #1a1a19; --surface-2: #232321; --surface-3: #2c2c29;
+  --ink: #ffffff; --ink-2: #c3c2b7; --muted: #8f8e86; --line: #34332f;
+  --hma: #d95926; --hma-soft: #3a2218;
+  --ind: #3987e5; --ind-soft: #172a42;
+  --fk: #9085e9; --fk-soft: #262044;
+  --bad: #e66767; --bad-soft: #3b1c1c;
+  --good: #3fb950; --good-soft: #15301c;
+  --warn: #d29922; --warn-soft: #33280f;
+  --term-bg: #0b0c0f;
+  --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.3);
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--bg); color: var(--ink); font: 15px/1.5 Inter, system-ui, -apple-system, "Segoe UI", sans-serif; -webkit-font-smoothing: antialiased; }
+code, .mono { font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace; }
+.wrap { max-width: 1320px; margin: 0 auto; padding: 24px 16px 40px; }
+header h1 { font-size: 22px; line-height: 1.25; margin: 0 0 4px; letter-spacing: -.01em; }
+header p { margin: 0; color: var(--ink-2); max-width: 860px; }
+.legend-inline { display: inline-flex; gap: 14px; margin-top: 10px; flex-wrap: wrap; font-size: 13px; color: var(--ink-2); }
+.legend-inline span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+.legend-inline .l-hma::before { background: var(--hma); }
+.legend-inline .l-ind::before { background: var(--ind); }
+.legend-inline .l-fk::before { background: var(--fk); }
+
+.controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 18px 0 12px; }
+button, select { font: inherit; font-size: 13px; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 6px 12px; cursor: pointer; }
+button:hover, select:hover { border-color: var(--muted); }
+button:focus-visible, select:focus-visible { outline: 2px solid var(--ind); outline-offset: 2px; }
+button.primary { background: var(--ink); color: var(--surface); border-color: var(--ink); min-width: 104px; }
+.spacer { flex: 1; }
+.kbd { font: 11px "JetBrains Mono", monospace; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; }
+.chapters { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
+.chapters .grp { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); align-self: center; margin: 0 2px 0 6px; }
+.chapters button { font-size: 12.5px; padding: 5px 10px; color: var(--ink-2); display: inline-flex; align-items: center; gap: 6px; }
+.chapters button .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
+.chapters button[data-who="hma"] .dot { background: var(--hma); }
+.chapters button[data-who="ind"] .dot { background: var(--ind); }
+.chapters button[data-who="both"] .dot { background: linear-gradient(90deg, var(--hma) 50%, var(--ind) 50%); }
+.chapters button.active { color: var(--ink); border-color: var(--ink); font-weight: 600; }
+.chapters button.done { color: var(--muted); }
+.progress { height: 3px; background: var(--line); border-radius: 2px; overflow: hidden; margin-bottom: 14px; }
+.progress > div { height: 100%; width: 0; background: var(--ink); transition: width .3s; }
+
+.stage { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 16px; align-items: start; }
+@media (max-width: 980px) { .stage { grid-template-columns: minmax(0, 1fr); } }
+.col { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow); min-width: 0; }
+.card-h { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--line); font-size: 12px; color: var(--muted); font-weight: 600; letter-spacing: .03em; text-transform: uppercase; }
+.card-h .r { margin-left: auto; text-transform: none; letter-spacing: 0; font-weight: 500; font-family: "JetBrains Mono", monospace; }
+
+/* call stack */
+.stack { padding: 10px 12px 12px; min-height: 196px; font: 12.5px/1.5 "JetBrains Mono", monospace; }
+.frame { display: flex; align-items: baseline; gap: 8px; padding: 3px 8px; border-radius: 6px; color: var(--ink-2); animation: slide .3s ease-out both; }
+.frame .fn { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.frame .loc { margin-left: auto; color: var(--muted); font-size: 11.5px; white-space: nowrap; }
+.frame .ind { color: var(--muted); white-space: pre; }
+.frame.top { background: var(--surface-2); color: var(--ink); font-weight: 600; }
+.frame.top.hma { box-shadow: inset 3px 0 0 var(--hma); }
+.frame.top.ind { box-shadow: inset 3px 0 0 var(--ind); }
+.frame.top.base { box-shadow: inset 3px 0 0 var(--muted); }
+@keyframes slide { from { opacity: 0; transform: translateX(-6px); } to { opacity: 1; transform: none; } }
+
+/* code */
+.code { background: var(--term-bg); border-color: #22252b; }
+.code .card-h { border-color: #22252b; color: #7f8794; }
+.code-body { padding: 8px 0 12px; font: 12px/1.6 "JetBrains Mono", ui-monospace, Menlo, monospace; color: #d7dae0; min-height: 280px; overflow-x: auto; }
+.cl { display: flex; white-space: pre; padding: 0 12px 0 0; transition: background .2s; }
+.cl .no { flex: none; width: 46px; text-align: right; padding-right: 12px; color: #4f5663; user-select: none; }
+.cl.gap .no, .cl.gap .tx { color: #4f5663; }
+.cl.cur { background: rgba(130,170,255,.14); box-shadow: inset 3px 0 0 #82aaff; }
+.cl.cur .no { color: #c8d3f5; }
+.tk-k { color: #c792ea; } .tk-s { color: #c3e88d; } .tk-c { color: #6c7686; font-style: italic; } .tk-n { color: #f78c6c; } .tk-f { color: #82aaff; } .tk-self { color: #f07178; }
+
+/* canvas */
+.canvas-card { padding: 14px; min-height: 520px; display: flex; flex-direction: column; gap: 12px; }
+.canvas-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.tag { font-size: 12px; font-weight: 600; padding: 3px 9px; border-radius: 999px; background: var(--surface-2); color: var(--ink-2); }
+.tag.hma { background: var(--hma-soft); color: var(--ink); box-shadow: inset 3px 0 0 var(--hma); }
+.tag.ind { background: var(--ind-soft); color: var(--ink); box-shadow: inset 3px 0 0 var(--ind); }
+.muted { color: var(--muted); }
+.small { font-size: 12.5px; }
+.canvas { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-start; }
+.canvas > * { min-width: 0; }
+.arrow { align-self: center; color: var(--muted); font-size: 18px; }
+
+.tbl { border: 1px solid var(--line); border-radius: 10px; background: var(--surface); overflow: hidden; max-width: 100%; transition: box-shadow .3s; }
+.tbl.flash { box-shadow: 0 0 0 3px var(--warn-soft), 0 0 0 4px var(--warn); }
+.tbl .tt { padding: 6px 10px; font-size: 12px; border-bottom: 1px solid var(--line); background: var(--surface-2); display: flex; gap: 6px; align-items: baseline; white-space: nowrap; }
+.tbl .tt span { color: var(--muted); font-size: 11px; }
+.tbl .scroll { overflow-x: auto; }
+.tbl table { border-collapse: collapse; font: 11.5px/1.3 "JetBrains Mono", monospace; }
+.tbl th, .tbl td { padding: 4px 8px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; transition: background .25s, color .25s, opacity .3s; }
+.tbl th { font-weight: 600; color: var(--ink-2); font-size: 10.5px; }
+.tbl tr:last-child td { border-bottom: 0; }
+.tbl .pk { color: var(--ink); font-weight: 600; }
+.tbl .fk { color: var(--fk); background: var(--fk-soft); }
+.tbl .ext { background: var(--hma-soft); }
+.tbl th.ext { color: var(--ink); }
+.tbl .drop { text-decoration: line-through; opacity: .35; }
+.tbl .q { color: var(--muted); }
+.tbl .mean { font-style: italic; color: var(--muted); }
+.tbl tr.hl td { background: var(--warn-soft); }
+.tbl tr.hl td.fk { background: var(--warn-soft); }
+.tbl tr.new td { animation: rowin .45s ease-out both; }
+.tbl td.new, .tbl th.new { animation: rowin .45s ease-out both; }
+@keyframes rowin { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: none; } }
+.tbl td.changed { background: var(--warn-soft); }
+.tbl td.ok { color: var(--good); font-weight: 600; }
+
+.op { border: 1.5px dashed var(--line); border-radius: 10px; padding: 8px 12px; font-size: 12.5px; min-width: 170px; background: var(--surface); transition: border-color .25s, background .25s; }
+.op .t { font: 600 12px "JetBrains Mono", monospace; }
+.op .d { color: var(--muted); font-size: 11.5px; }
+.op.on { border-style: solid; }
+.op.on.hma { border-color: var(--hma); background: var(--hma-soft); }
+.op.on.ind { border-color: var(--ind); background: var(--ind-soft); }
+.op.pulse { animation: pulse .5s ease-out; }
+@keyframes pulse { 0% { transform: scale(.97); } 60% { transform: scale(1.02); } 100% { transform: none; } }
+
+.chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.chip { font-size: 12.5px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); color: var(--ink-2); animation: pop .35s ease-out both; }
+.chip b { color: var(--ink); }
+.chip.bad { border-color: var(--bad); background: var(--bad-soft); color: var(--ink); }
+.chip.ok { border-color: var(--good); background: var(--good-soft); color: var(--ink); }
+.chip.hma { border-color: var(--hma); background: var(--hma-soft); color: var(--ink); }
+.chip.ind { border-color: var(--ind); background: var(--ind-soft); color: var(--ink); }
+@keyframes pop { from { opacity: 0; transform: translateY(4px) scale(.97); } to { opacity: 1; transform: none; } }
+
+/* arrays (numpy) */
+.arrs { display: flex; flex-direction: column; gap: 6px; width: 100%; }
+.arr { display: grid; grid-template-columns: minmax(150px, 34%) minmax(0, 1fr); gap: 10px; align-items: center; animation: pop .35s ease-out both; }
+.arr .lab { font: 11.5px "JetBrains Mono", monospace; color: var(--ink-2); text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.arr .cells { display: flex; gap: 3px; flex-wrap: wrap; align-items: center; }
+.arr .cells i { font: 600 11.5px "JetBrains Mono", monospace; font-style: normal; min-width: 28px; padding: 3px 6px; text-align: center; border-radius: 5px; background: var(--surface-2); border: 1px solid var(--line); }
+.arr .cells i.ind { background: var(--ind-soft); border-color: var(--ind); }
+.arr .cells i.fk { background: var(--fk-soft); border-color: var(--fk); color: var(--fk); }
+.arr .cells i.hot { background: var(--warn-soft); border-color: var(--warn); }
+.arr .cells .eq { color: var(--muted); font: 11.5px "JetBrains Mono", monospace; margin-left: 4px; }
+@media (max-width: 560px) { .arr { grid-template-columns: minmax(0, 1fr); gap: 2px; } .arr .lab { text-align: left; } }
+
+/* histogram */
+.hist { display: flex; gap: 6px; align-items: flex-end; height: 92px; padding: 4px 0 0; }
+.hist .hb { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; width: 34px; font: 10.5px "JetBrains Mono", monospace; color: var(--muted); }
+.hist .hb b { width: 22px; background: var(--ind); border-radius: 4px 4px 0 0; height: 0; transition: height .5s cubic-bezier(.2,.8,.2,1); }
+.hist .hb .v { color: var(--ink-2); margin-bottom: 2px; }
+
+/* matrix */
+.mtx { border-collapse: collapse; font: 11.5px "JetBrains Mono", monospace; }
+.mtx th, .mtx td { padding: 4px 9px; border: 1px solid var(--line); text-align: center; }
+.mtx th { background: var(--surface-2); font-weight: 600; font-size: 10.5px; color: var(--ink-2); }
+.mtx td { transition: background .3s; min-width: 52px; }
+.mtx td.on { background: var(--hma-soft); }
+.mtx td.pick { background: var(--hma); color: #fff; font-weight: 700; }
+
+/* cascade */
+.chain { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.chain .cn { border: 1px solid var(--line); border-radius: 9px; padding: 6px 10px; text-align: center; min-width: 74px; background: var(--surface); }
+.chain .cn b { display: block; font: 600 16px "JetBrains Mono", monospace; font-variant-numeric: tabular-nums; }
+.chain .cn span { font-size: 11px; color: var(--muted); }
+.chain .cn.hot { border-color: var(--hma); background: var(--hma-soft); }
+.chain .ar { color: var(--muted); }
+
+/* overview table */
+table.cmp { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+table.cmp th, table.cmp td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+table.cmp th { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 600; }
+table.cmp td code { font-size: 11.5px; }
+table.cmp tr { transition: opacity .35s; }
+table.cmp tr.hid { opacity: 0; }
+table.cmp td.h { box-shadow: inset 3px 0 0 var(--hma); }
+table.cmp td.i { box-shadow: inset 3px 0 0 var(--ind); }
+.y { color: var(--good); font-weight: 600; } .n { color: var(--bad); font-weight: 600; }
+
+/* counters */
+.counters { padding: 10px 14px 14px; }
+.counters table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.counters th, .counters td { padding: 6px 6px; border-bottom: 1px solid var(--line); text-align: right; }
+.counters th:first-child, .counters td:first-child { text-align: left; color: var(--ink-2); }
+.counters th { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 600; }
+.counters tr:last-child td { border-bottom: 0; }
+.counters td.v { font: 600 16px "JetBrains Mono", monospace; font-variant-numeric: tabular-nums; width: 90px; transition: color .3s; }
+.counters td.v.bump { color: var(--warn); }
+.counters th.h { color: var(--hma); } .counters th.i { color: var(--ind); }
+.counters .note { font-size: 11.5px; color: var(--muted); margin-top: 8px; }
+
+.box2 { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; background: var(--surface); }
+.caption { margin-top: 14px; padding: 14px 18px; border-radius: 12px; background: var(--surface); border: 1px solid var(--line); font-size: 15px; line-height: 1.55; min-height: 74px; display: flex; gap: 14px; align-items: flex-start; }
+.caption .who { flex: none; font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); padding-top: 3px; width: 96px; }
+.caption .txt { transition: opacity .25s; }
+.caption .txt.fade { opacity: 0; }
+.caption code { font-size: 13px; background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }
+@media (max-width: 560px) { .caption { flex-direction: column; gap: 4px; } }
+footer { margin-top: 18px; font-size: 12.5px; color: var(--muted); }
+footer code { font-size: 12px; }
+@media (prefers-reduced-motion: reduce) { .frame, .chip, .arr, .tbl tr.new td, .tbl td.new, .tbl th.new, .op.pulse { animation: none; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Por dentro do <code>HMASynthesizer</code> e do <code>IndependentSynthesizer</code></h1>
+    <p>Um mini-dataset de CNPJ (5 empresas, 2 municípios, 7 estabelecimentos) passa por cada método das duas implementações. À esquerda, a pilha de chamadas e o código real do fork; à direita, o que acontece com os dados e quanto trabalho cada passo custa.</p>
+    <div class="legend-inline"><span class="l-hma">HMASynthesizer · <code>hma.py</code> + <code>hierarchical_sampler.py</code></span><span class="l-ind">IndependentSynthesizer · <code>independent.py</code> + <code>independent_sampler.py</code></span><span class="l-fk">coluna de FK</span></div>
+  </header>
+
+  <div class="controls">
+    <button class="primary" id="btn-play">❚❚ Pausar</button>
+    <button id="btn-prev">◀ Anterior</button>
+    <button id="btn-next">Próxima ▶</button>
+    <button id="btn-restart">↺ Recomeçar</button>
+    <label class="small muted" for="speed" style="margin-left:6px">Velocidade</label>
+    <select id="speed">
+      <option value="0.75">0,75×</option><option value="1" selected>1×</option><option value="1.5">1,5×</option><option value="2">2×</option><option value="3">3×</option>
+    </select>
+    <span class="spacer"></span>
+    <span class="small muted"><span class="kbd">espaço</span> pausa · <span class="kbd">←</span> <span class="kbd">→</span> cenas</span>
+  </div>
+  <nav class="chapters" id="chapters" aria-label="Cenas"></nav>
+  <div class="progress"><div id="progress"></div></div>
+
+  <main class="stage">
+    <div class="col">
+      <section class="card" aria-label="Pilha de chamadas">
+        <div class="card-h">Pilha de chamadas <span class="r" id="stack-who"></span></div>
+        <div class="stack" id="stack"></div>
+      </section>
+      <section class="card code" aria-label="Código">
+        <div class="card-h">Código <span class="r" id="code-file"></span></div>
+        <div class="code-body" id="code"></div>
+      </section>
+    </div>
+    <div class="col">
+      <section class="card canvas-card" id="canvas-card" aria-label="Dados" aria-live="polite"></section>
+      <section class="card" aria-label="Contadores de trabalho">
+        <div class="card-h">Trabalho acumulado no mini-dataset</div>
+        <div class="counters">
+          <table>
+            <thead><tr><th>Métrica</th><th class="h">HMA</th><th class="i">Independent</th></tr></thead>
+            <tbody>
+              <tr><td>GaussianCopulas ajustadas ou recriadas</td><td class="v" id="c-h-models">0</td><td class="v" id="c-i-models">0</td></tr>
+              <tr><td>Iterações de loop Python por linha</td><td class="v" id="c-h-loops">0</td><td class="v" id="c-i-loops">0</td></tr>
+              <tr><td>Colunas modeladas em <code>empresas</code></td><td class="v" id="c-h-cols">2</td><td class="v" id="c-i-cols">2</td></tr>
+              <tr><td>Cópias de DataFrame com <code>pd.concat</code></td><td class="v" id="c-h-concat">0</td><td class="v" id="c-i-concat">0</td></tr>
+            </tbody>
+          </table>
+          <div class="note">Com 7 estabelecimentos a diferença é pequena. As métricas do HMA crescem com o número de <b>linhas</b>; as do Independent, só com o número de <b>tabelas</b>.</div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <div class="caption"><div class="who" id="cap-who">Narração</div><div class="txt" id="cap"></div></div>
+
+  <footer>
+    Código citado do fork <code>dmux/SDVReal</code>, branch <code>feature/independent-multi-table-synthesizer</code>. Os parâmetros das cópulas e os sorteios são ilustrativos; as contagens de colunas da cascata vêm de <code>HMASynthesizer._estimate_num_columns</code>. Números de escala: <code>benchmarks/BENCHMARK.pt-BR.md</code>.
+  </footer>
+</div>
+
+<script>
+(() => {
+'use strict';
+
+/* ================= engine ================= */
+const CANCEL = Symbol('cancel');
+const S = { speed: 1, paused: false, run: 0, scene: 0, ended: false };
+const $ = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+function wait(ms) {
+  const id = S.run;
+  return new Promise((res, rej) => {
+    let left = ms, last = performance.now();
+    const f = now => {
+      if (id !== S.run) return rej(CANCEL);
+      if (!S.paused) left -= (now - last) * S.speed;
+      last = now;
+      if (left <= 0) res(); else requestAnimationFrame(f);
+    };
+    requestAnimationFrame(f);
+  });
+}
+const easeInOut = p => p < .5 ? 2 * p * p : 1 - Math.pow(-2 * p + 2, 2) / 2;
+function tween(ms, fn, ease = easeInOut) {
+  const id = S.run;
+  return new Promise((res, rej) => {
+    let t = 0, last = performance.now();
+    const f = now => {
+      if (id !== S.run) return rej(CANCEL);
+      if (!S.paused) t += (now - last) * S.speed;
+      last = now;
+      const p = Math.min(1, t / ms);
+      fn(ease(p), p);
+      if (p < 1) requestAnimationFrame(f); else res();
+    };
+    requestAnimationFrame(f);
+  });
+}
+const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+/* ================= narração ================= */
+const cap = $('#cap');
+async function say(html, who) {
+  cap.classList.add('fade');
+  await wait(200);
+  cap.innerHTML = html;
+  $('#cap-who').textContent = who || 'Narração';
+  cap.classList.remove('fade');
+}
+
+/* ================= pilha de chamadas ================= */
+let stackNow = [];
+function setStack(frames, who) {
+  const el = $('#stack');
+  const prev = stackNow.map(f => f.join('|'));
+  el.innerHTML = frames.map((f, i) => {
+    const isTop = i === frames.length - 1;
+    const isNew = prev[i] !== f.join('|');
+    return `<div class="frame${isTop ? ' top ' + who : ''}" style="${isNew ? '' : 'animation:none'}">
+      <span class="ind">${i ? '  '.repeat(i - 1) + '└ ' : ''}</span><span class="fn">${esc(f[0])}</span><span class="loc">${esc(f[1])}</span></div>`;
+  }).join('');
+  stackNow = frames;
+  $('#stack-who').textContent = { hma: 'HMASynthesizer', ind: 'IndependentSynthesizer', base: 'BaseMultiTableSynthesizer' }[who] || '';
+}
+async function push(frame, who) { setStack([...stackNow, frame], who); await wait(350); }
+async function pop(who) { setStack(stackNow.slice(0, -1), who); await wait(200); }
+
+/* ================= código ================= */
+function hl(src) {
+  const re = /(#.*$)|('[^']*'|"[^"]*"|f'[^']*')|\b(self)\b|\b(for|in|if|else|elif|not|return|while|and|or|is|None|True|False|try|except|continue|def|import|from|as|with)\b|\b(len|round|sum|divmod|set|getattr|float|int)\b|(\b\d[\d_.]*\b)/g;
+  let out = '', last = 0, m;
+  while ((m = re.exec(src))) {
+    out += esc(src.slice(last, m.index));
+    const cls = m[1] ? 'c' : m[2] ? 's' : m[3] ? 'self' : m[4] ? 'k' : m[5] ? 'f' : 'n';
+    out += `<span class="tk-${cls}">${esc(m[0])}</span>`;
+    last = m.index + m[0].length;
+  }
+  return out + esc(src.slice(last));
+}
+function setCode(file, lines) {
+  $('#code-file').textContent = file;
+  $('#code').innerHTML = lines.map(([n, t]) => n === null
+    ? `<div class="cl gap"><span class="no">⋮</span><span class="tx"></span></div>`
+    : `<div class="cl" data-n="${n}"><span class="no">${n}</span><span class="tx">${hl(t)}</span></div>`).join('');
+}
+function hlLine(...ns) {
+  $$('#code .cl').forEach(l => l.classList.toggle('cur', ns.includes(+l.dataset.n)));
+}
+
+/* trechos reais (linhas não contíguas são separadas por ⋮) */
+const G = [null, ''];
+const CODE = {
+  baseFit: ['sdv/multi_table/base.py', [
+    [668, `def fit_processed_data(self, processed_data):`], G,
+    [692, `    with disable_single_table_logger():`],
+    [693, `        augmented_data = self._augment_tables(processed_data)`],
+    [694, `        self._model_tables(augmented_data)`], G,
+    [821, `def sample(self, table_name, num_rows, ...):`], G,
+    [851, `        sampled_data = self._sample(`],
+  ]],
+  hmaAugment: ['sdv/multi_table/hma.py', [
+    [426, `children = self.metadata._get_child_map()[table_name]`],
+    [427, `for child_name in children:`],
+    [428, `    if child_name not in self._augmented_tables:`],
+    [429, `        child_table = self._augment_table(tables[child_name], tables, child_name)`], G,
+    [435, `    for foreign_key in foreign_keys:`],
+    [440, `        extension = self._get_extension(`],
+    [441, `            child_name, child_table.copy(), foreign_key, progress_bar_desc`], G,
+    [341, `for foreign_key_value in tqdm(foreign_key_values, **pbar_args):`],
+    [343, `    child_rows = child_table.loc[[foreign_key_value]]`],
+    [350, `    child_rows = child_rows[child_rows.columns.difference(foreign_key_columns)]`],
+    [356, `    synthesizer = self._synthesizer(`],
+    [357, `        table_meta,`],
+    [358, `        **self._table_parameters[child_name],`],
+    [359, `    )`],
+    [364, `    synthesizer.fit_processed_data({`],
+    [365, `        child_name: child_rows.reset_index(drop=True)`],
+    [366, `    })`],
+    [367, `    row = synthesizer._get_parameters()`], G,
+    [389, `return pd.DataFrame(extension_rows, index=index)`],
+  ]],
+  hmaMerge: ['sdv/multi_table/hma.py', [
+    [453, `table = table.merge(extension, how='left', right_index=True, left_index=True)`],
+    [454, `num_rows_key = f'__{child_name}__{foreign_key}__num_rows'`],
+    [455, `table[num_rows_key] = table[num_rows_key].fillna(0)`],
+    [456, `self._max_child_rows[num_rows_key] = table[num_rows_key].max()`],
+    [457, `self._min_child_rows[num_rows_key] = table[num_rows_key].min()`], G,
+    [470, `self._clear_nans(table, ignore_cols=foreign_keys)`], G,
+    [529, `for table_name, table in tqdm(augmented_data_to_model, **pbar_args):`],
+    [530, `    keys = self._pop_foreign_keys(table, table_name)`],
+    [531, `    self._clear_nans(table)`], G,
+    [543, `    self._table_synthesizers[table_name].fit_processed_data({table_name: table})`],
+  ]],
+  hmaSampleRoot: ['sdv/sampling/hierarchical_sampler.py', [
+    [386, `synthesizer = self._table_synthesizers[table]`],
+    [388, `sampled_data[table] = self._sample_rows(`],
+    [389, `    synthesizer,`],
+    [390, `    num_rows,`], G,
+    [394, `self._sample_children(`], G,
+    [255, `    self._enforce_table_size(child_name, table_name, scale, sampled_data)`], G,
+    [188, `total_parent_rows = round(total_num_rows * (1 - null_fk_pctg))`],
+    [192, `key_data = sampled_data[table_name][num_rows_key].fillna(0).round()`],
+    [193, `sampled_data[table_name][num_rows_key] = key_data.clip(min_rows, max_rows).astype(int)`], G,
+    [195, `while sum(sampled_data[table_name][num_rows_key]) != total_parent_rows:`],
+    [196, `    num_rows_column = sampled_data[table_name][num_rows_key].argsort()`],
+  ]],
+  hmaChildren: ['sdv/sampling/hierarchical_sampler.py', [
+    [257, `if child_name not in sampled_data:  # Sample based on only 1 parent`],
+    [258, `    for _, row in sampled_data[table_name].astype(object).iterrows():`],
+    [259, `        self._add_child_rows(`], G,
+    [128, `num_rows = parent_row[f'__{child_name}__{foreign_key}__num_rows']`],
+    [130, `child_synthesizer = self._recreate_child_synthesizer(child_name, parent_name, parent_row)`],
+    [132, `sampled_rows = self._sample_rows(`],
+    [133, `    child_synthesizer,`],
+    [134, `    num_rows,`], G,
+    [144, `    sampled_rows[foreign_key] = (`],
+    [145, `        parent_row[parent_key] if parent_row is not None else np.nan`], G,
+    [148, `previous = sampled_data.get(child_name)`],
+    [149, `if previous is None:`],
+    [150, `    sampled_data[child_name] = sampled_rows`],
+    [151, `else:`],
+    [152, `    sampled_data[child_name] = pd.concat([previous, sampled_rows]).reset_index(`],
+  ]],
+  hmaLikelihood: ['sdv/multi_table/hma.py', [
+    [750, `parent_table = parent_table.set_index(primary_key)`],
+    [751, `num_rows = parent_table[f'__{child_name}__{foreign_key}__num_rows'].copy()`], G,
+    [754, `likelihoods = self._get_likelihoods(child_table, parent_table, child_name, foreign_key)`],
+    [755, `return likelihoods.apply(self._find_parent_id, axis=1, num_rows=num_rows)`], G,
+    [701, `for parent_id, row in parent_rows.iterrows():`],
+    [702, `    parameters = self._extract_parameters(row, table_name, foreign_key)`],
+    [704, `    synthesizer = self._synthesizer(table_meta, **self._table_parameters[table_name])`],
+    [709, `    synthesizer._set_parameters(parameters)`],
+    [711, `    likelihoods[parent_id] = synthesizer._get_likelihood(table_rows)`], G,
+    [668, `chosen_parent = np.random.choice(candidates, p=candidate_weights)`],
+    [670, `num_rows[chosen_parent] -= 1`],
+  ]],
+  indAugment: ['sdv/multi_table/independent.py', [
+    [71, `for table_name, table_data in processed_data.items():`],
+    [72, `    self._table_sizes[table_name] = len(table_data)`], G,
+    [74, `for relationship in self.metadata.relationships:`], G,
+    [80, `        foreign_key_values = child_table[foreign_key]`], G,
+    [85, `    parent_keys = self._get_parent_keys(parent_name, processed_data[parent_name])`],
+    [86, `    counts = foreign_key_values.value_counts().reindex(parent_keys, fill_value=0)`],
+    [87, `    key = self._get_relationship_key(parent_name, child_name, foreign_key)`],
+    [88, `    self._cardinality[key] = np.bincount(counts.to_numpy().astype(int))`],
+    [89, `    self._null_foreign_key_rates[key] = (`],
+    [90, `        float(foreign_key_values.isna().mean()) if len(foreign_key_values) else 0.0`],
+    [91, `    )`],
+  ]],
+  indModel: ['sdv/multi_table/independent.py', [
+    [103, `for table_name, table_data in tqdm(list(augmented_data.items()), **pbar_args):`],
+    [104, `    primary_key = self.metadata.tables[table_name].primary_key`],
+    [105, `    foreign_keys = [`],
+    [106, `        foreign_key`],
+    [107, `        for foreign_key in self.metadata._get_all_foreign_keys(table_name)`],
+    [108, `        if foreign_key != primary_key and foreign_key in table_data.columns`],
+    [109, `    ]`],
+    [110, `    table_data = table_data.drop(columns=foreign_keys)`], G,
+    [112, `    if not table_data.empty:`],
+    [113, `        self._table_synthesizers[table_name].fit_processed_data({table_name: table_data})`],
+  ]],
+  indSample: ['sdv/sampling/independent_sampler.py', [
+    [187, `for table in self.metadata.tables:`],
+    [188, `    num_rows = round(self._table_sizes[table] * scale)`], G,
+    [193, `    self._sample_table(`],
+    [194, `        synthesizer=synthesizer,`],
+    [195, `        table_name=table,`],
+    [196, `        num_rows=num_rows,`], G,
+    [209, `self._connect_tables(sampled_data)`], G,
+    [87, `queue = [`],
+    [88, `    table for table in self.metadata.tables if not self.metadata._get_parent_map()[table]`],
+    [89, `]`],
+    [90, `while queue:`],
+    [91, `    parent = queue.pop(0)`],
+    [92, `    for child in self.metadata._get_child_map()[parent]:`],
+    [93, `        self._add_foreign_key_columns(`], G,
+    [96, `        if set(self.metadata._get_all_foreign_keys(child)).issubset(`],
+    [97, `            set(sampled_data[child].columns)`],
+    [98, `        ):`],
+    [99, `            queue.append(child)`],
+  ]],
+  indFk: ['sdv/multi_table/independent.py', [
+    [176, `num_nulls = round(num_rows * self._null_foreign_key_rates.get(key, 0.0))`],
+    [177, `values = self._sample_foreign_key_values(`],
+    [178, `    self._cardinality[key], parent_keys, num_rows - num_nulls`],
+    [179, `)`], G,
+    [128, `real_counts = np.repeat(np.arange(len(cardinality)), cardinality)`], G,
+    [132, `    repeats, remainder = divmod(len(parent_keys), len(real_counts))`],
+    [133, `    counts = np.concatenate([`],
+    [134, `        np.tile(real_counts, repeats),`],
+    [135, `        np.random.choice(real_counts, remainder, replace=False),`],
+    [136, `    ])`],
+    [137, `    counts = np.random.permutation(counts)`], G,
+    [139, `values = np.repeat(parent_keys, counts)`],
+    [140, `if len(values) > num_children:`],
+    [141, `    values = np.random.choice(values, num_children, replace=False)`], G,
+    [186, `child_table[foreign_key] = np.random.permutation(values)`],
+  ]],
+};
+
+/* ================= contadores ================= */
+const C = { h: { models: 0, loops: 0, cols: 2, concat: 0 }, i: { models: 0, loops: 0, cols: 2, concat: 0 } };
+function setCounters(h, i) {
+  Object.assign(C.h, h); Object.assign(C.i, i);
+  for (const w of ['h', 'i']) for (const k in C[w]) $(`#c-${w}-${k}`).textContent = C[w][k];
+}
+function bump(w, k, d = 1) {
+  C[w][k] += d;
+  const el = $(`#c-${w}-${k}`);
+  el.textContent = C[w][k];
+  el.classList.remove('bump'); void el.offsetWidth; el.classList.add('bump');
+  setTimeout(() => el.classList.remove('bump'), 500);
+}
+/* estado dos contadores ao fim de cada cena, para pular de cena sem perder o acumulado */
+const H0 = { models: 0, loops: 0, cols: 2, concat: 0 };
+const H1 = { models: 6, loops: 6, cols: 2, concat: 0 };
+const H2 = { models: 9, loops: 6, cols: 8, concat: 0 };
+const H4 = { models: 14, loops: 12, cols: 8, concat: 4 };
+const H5 = { models: 16, loops: 21, cols: 8, concat: 4 };
+const I0 = { models: 0, loops: 0, cols: 2, concat: 0 };
+const I7 = { models: 3, loops: 0, cols: 2, concat: 0 };
+
+/* ================= tabelas ================= */
+const canvasCard = $('#canvas-card');
+function head(tag, who, sub) {
+  return `<div class="canvas-head"><span class="tag ${who}">${tag}</span><span class="small muted">${sub || ''}</span></div>`;
+}
+function tbl(id, title, sub, cols, rows) {
+  // cols: [{n, c}] ; rows: arrays of values (string) or {v, c}
+  const th = cols.map(c => `<th class="${c.c || ''}">${c.n}</th>`).join('');
+  const tr = rows.map(r => `<tr>${r.map((v, j) => cell(v, cols[j])).join('')}</tr>`).join('');
+  return `<div class="tbl" id="${id}"><div class="tt"><b>${title}</b><span>${sub || ''}</span></div><div class="scroll"><table><thead><tr>${th}</tr></thead><tbody>${tr}</tbody></table></div></div>`;
+}
+function cell(v, col) {
+  if (v && typeof v === 'object') return `<td class="${(col && col.c) || ''} ${v.c || ''}">${v.v}</td>`;
+  return `<td class="${(col && col.c) || ''}">${v}</td>`;
+}
+const T = id => $('#' + id);
+function addRow(id, vals, cls = []) {
+  const tb = $('tbody', T(id));
+  const tr = document.createElement('tr');
+  tr.className = 'new';
+  tr.innerHTML = vals.map((v, j) => `<td class="${cls[j] || ''}">${v}</td>`).join('');
+  tb.appendChild(tr);
+  return tr;
+}
+function addCol(id, name, vals, cls = '') {
+  const t = T(id);
+  $('thead tr', t).insertAdjacentHTML('beforeend', `<th class="new ${cls}">${name}</th>`);
+  $$('tbody tr', t).forEach((tr, i) => tr.insertAdjacentHTML('beforeend', `<td class="new ${cls}">${vals[i] ?? ''}</td>`));
+}
+function rows(id) { return $$('tbody tr', T(id)); }
+function hlRows(id, idx) { rows(id).forEach((r, i) => r.classList.toggle('hl', idx.includes(i))); }
+function setCell(id, r, c, v, cls) {
+  const td = rows(id)[r].children[c];
+  td.innerHTML = v;
+  if (cls) { td.className = td.className.replace(/\b(q|changed|ok)\b/g, '').trim() + ' ' + cls; }
+}
+function op(id, who, t, d) { return `<div class="op ${who}" id="${id}"><div class="t">${t}</div><div class="d">${d || ''}</div></div>`; }
+function setOp(id, t, d, on = true) {
+  const o = T(id);
+  $('.t', o).innerHTML = t; $('.d', o).innerHTML = d || '';
+  o.classList.toggle('on', on);
+  o.classList.remove('pulse'); void o.offsetWidth; o.classList.add('pulse');
+}
+function chip(html, cls = '') { $('#chips').insertAdjacentHTML('beforeend', `<span class="chip ${cls}">${html}</span>`); }
+function arr(label, cells, cls = '', eq = '') {
+  const c = cells.map(v => `<i class="${cls}">${v}</i>`).join('');
+  $('#arrs').insertAdjacentHTML('beforeend', `<div class="arr"><div class="lab" title="${esc(label)}">${label}</div><div class="cells">${c}${eq ? `<span class="eq">${eq}</span>` : ''}</div></div>`);
+}
+
+/* ================= mini-dataset ================= */
+const EMP_COLS = [{ n: 'cnpj_basico', c: 'pk' }, { n: 'porte' }, { n: 'capital' }];
+const EMP = [['A', 'ME', '10k'], ['B', 'EPP', '250k'], ['C', 'ME', '5k'], ['D', 'DEMAIS', '1,2M'], ['E', 'ME', '30k']];
+const MUN_COLS = [{ n: 'codigo', c: 'pk' }, { n: 'uf' }];
+const MUN = [['M1', 'SP'], ['M2', 'RJ']];
+const EST_COLS = [{ n: 'cnpj_basico', c: 'fk' }, { n: 'municipio', c: 'fk' }, { n: 'situacao' }, { n: 'inicio' }];
+const EST = [['A', 'M1', 'ativa', '2015'], ['A', 'M1', 'ativa', '2018'], ['A', 'M2', 'baixada', '2020'], ['B', 'M2', 'ativa', '2011'], ['D', 'M1', 'inapta', '2019'], ['E', 'M1', 'ativa', '2021'], ['E', 'M2', 'ativa', '2022']];
+const EXT_NAMES = ['num_rows', 'situacao.loc', 'situacao.scale', 'inicio.loc', 'inicio.scale', 'correlation'];
+
+/* ================= cenas ================= */
+const SCENES = [];
+const scene = (title, who, group, run) => SCENES.push({ title, who, group, run });
+
+/* 0 · visão geral */
+scene('O template comum', 'both', 'Visão geral', async () => {
+  setCounters(H0, I0);
+  setStack([['synth.fit(data)', 'base.py:701'], ['fit_processed_data()', 'base.py:668']], 'base');
+  setCode(...CODE.baseFit);
+  canvasCard.innerHTML = head('Mini-dataset', '', 'mesmo formato da base CNPJ, em miniatura') +
+    `<div class="canvas">${tbl('emp', 'empresas', '5 linhas · pai', EMP_COLS, EMP)}${tbl('mun', 'municipios', '2 linhas · pai', MUN_COLS, MUN)}${tbl('est', 'estabelecimentos', '7 linhas · filho de ambos', EST_COLS, EST)}</div>
+    <table class="cmp" id="tpl"><thead><tr><th>Método do template</th><th>HMASynthesizer</th><th>IndependentSynthesizer</th></tr></thead><tbody>
+      <tr class="hid"><td><code>preprocess</code></td><td colspan="2">igual nos dois: RDT por tabela (<code>base.py:612</code>)</td></tr>
+      <tr class="hid"><td><code>_augment_tables</code></td><td class="h">1 cópula <b>por linha do pai</b>; parâmetros viram colunas do pai</td><td class="i">contagem de filhos por pai + taxa de FK nula</td></tr>
+      <tr class="hid"><td><code>_model_tables</code></td><td class="h">tabela do pai <b>larga</b> (colunas estendidas)</td><td class="i">cada tabela <b>sem</b> as colunas de FK</td></tr>
+      <tr class="hid"><td>mixin de sampling</td><td class="h"><code>BaseHierarchicalSampler</code>: DFS, pai a pai</td><td class="i"><code>BaseIndependentSampler</code>: tabela a tabela</td></tr>
+      <tr class="hid"><td><code>_add_foreign_key_columns</code></td><td class="h">likelihood de cada pai para cada filho</td><td class="i"><code>np.repeat</code> + <code>np.random.permutation</code></td></tr>
+    </tbody></table>`;
+  await say('O mini-dataset: <b>5 empresas</b> e <b>2 municípios</b> são pais de <b>7 estabelecimentos</b>. A empresa A tem 3 filiais, B, C, D e E têm 1, 0, 1 e 2. Essa é a "cauda" do exemplo.', 'Contexto');
+  await wait(1200);
+  hlRows('est', [0, 1, 2]);
+  await wait(1600);
+  hlRows('est', []);
+  await say('Os dois synthesizers herdam de <code>BaseMultiTableSynthesizer</code>. O <code>fit</code> chama sempre <code>_augment_tables</code> e depois <code>_model_tables</code>; o que muda é <b>a implementação de cada passo</b>.', 'Contexto');
+  hlLine(693, 694);
+  for (const tr of $$('#tpl tbody tr')) { tr.classList.remove('hid'); await wait(650); }
+  await wait(3500);
+});
+
+/* 1 · HMA _get_extension */
+scene('_get_extension', 'hma', 'HMA · fit', async () => {
+  setCounters(H0, I0);
+  setStack([['synth.fit(data)', 'base.py:701'], ['fit_processed_data()', 'base.py:668'], ['_augment_tables()', 'hma.py:473']], 'hma');
+  setCode(...CODE.hmaAugment);
+  canvasCard.innerHTML = head('HMASynthesizer · _augment_tables', 'hma', 'aprende a relação empresas → estabelecimentos') +
+    `<div class="canvas">${tbl('est', 'estabelecimentos', 'processado', EST_COLS, EST)}
+      <span class="arrow">→</span>${op('op', 'hma', 'GaussianCopula', 'aguardando')}<span class="arrow">→</span>
+      ${tbl('ext', 'extension', 'índice = FK', [{ n: 'fk', c: 'pk' }, ...EXT_NAMES.map(n => ({ n, c: 'ext' }))], [])}</div>
+    <div class="chips" id="chips"></div>`;
+  await say('<code>_augment_tables</code> começa pelas raízes e desce recursivamente: <code>_augment_table(\'empresas\')</code> primeiro processa os filhos e, para cada FK, chama <code>_get_extension</code>.', 'HMA');
+  await push(['_augment_table("empresas")', 'hma.py:405'], 'hma');
+  hlLine(427, 435, 440);
+  await wait(1200);
+  await push(['_get_extension("estabelecimentos", "cnpj_basico")', 'hma.py:304'], 'hma');
+  await say('Dentro de <code>_get_extension</code>, um loop <b>por valor de FK</b>, ou seja, por empresa: separa as linhas filhas, ajusta uma <b>GaussianCopula nova só com elas</b> e achata os parâmetros num vetor.', 'HMA');
+  const groups = [['A', [0, 1, 2], ['3', '0,67', '0,47', '0,51', '0,27', '−0,12']], ['B', [3], ['1', '0,25', '—', '0,10', '—', '0,00']], ['D', [4], ['1', '0,90', '—', '0,62', '—', '0,00']], ['E', [5, 6], ['2', '0,25', '0,05', '0,96', '0,04', '0,50']]];
+  for (const [fk, idx, vals] of groups) {
+    hlLine(341, 343); hlRows('est', idx);
+    setOp('op', `child_table.loc[["${fk}"]]`, `${idx.length} linha(s) filha(s)`);
+    bump('h', 'loops');
+    await wait(900);
+    hlLine(356, 364, 365);
+    setOp('op', `GaussianCopula #${C.h.models + 1}`, `fit em ${idx.length} linha(s) de ${fk}`);
+    bump('h', 'models');
+    await wait(1000);
+    hlLine(367);
+    setOp('op', '_get_parameters()', 'num_rows, univariates, correlation');
+    addRow('ext', [fk, ...vals], ['pk', ...vals.map(() => 'ext')]);
+    await wait(800);
+    if (fk === 'B') {
+      await say('B tem um único filho: com <code>len(child_rows) == 1</code> as colunas de <code>scale</code> viram <code>None</code> (hma.py:377). E <b>C não aparece no loop</b>: <code>unique()</code> só enxerga FKs que existem no filho.', 'HMA');
+      await wait(1800);
+    }
+  }
+  hlRows('est', []);
+  hlLine(389);
+  setOp('op', 'pd.DataFrame(extension_rows)', '4 linhas × 6 colunas', false);
+  chip('nomes reais: <b>__estabelecimentos__cnpj_basico__</b>num_rows, …univariates__situacao__loc, …', 'hma');
+  await wait(1600);
+  await say('O mesmo acontece para <b>cada FK</b>: <code>municipios → estabelecimentos</code> ganha mais <b>2 cópulas</b> (M1 com 4 filhos, M2 com 3). No total, já são 6 modelos e o fit da tabela ainda nem começou.', 'HMA');
+  setOp('op', 'GaussianCopula #5, #6', 'municipios M1 e M2', true);
+  bump('h', 'models', 2); bump('h', 'loops', 2);
+  chip('1 cópula por linha de cada pai → O(número de pais)', 'bad');
+  await wait(3800);
+});
+
+/* 2 · HMA merge + cascata + _model_tables */
+scene('merge e _model_tables', 'hma', 'HMA · fit', async () => {
+  setCounters(H1, I0);
+  setStack([['synth.fit(data)', 'base.py:701'], ['fit_processed_data()', 'base.py:668'], ['_augment_tables()', 'hma.py:473'], ['_augment_table("empresas")', 'hma.py:405']], 'hma');
+  setCode(...CODE.hmaMerge);
+  canvasCard.innerHTML = head('HMASynthesizer · tabela larga', 'hma', 'a extension entra como colunas do pai') +
+    `<div class="canvas">${tbl('emp', 'empresas', 'augmented', EMP_COLS, EMP)}</div>
+     <div class="box2" id="cascade" style="opacity:0;transition:opacity .4s"></div>
+     <div class="canvas" id="models"></div>
+     <div class="chips" id="chips"></div>`;
+  await say('<code>table.merge(extension, how=\'left\')</code>: os 6 parâmetros de cada empresa viram <b>colunas da tabela empresas</b>. O modelo do pai vai ter que aprender a distribuição desses parâmetros.', 'HMA');
+  hlLine(453);
+  const ext = { A: ['3', '0,67', '0,47', '0,51', '0,27', '−0,12'], B: ['1', '0,25', '—', '0,10', '—', '0,00'], C: ['NaN', 'NaN', 'NaN', 'NaN', 'NaN', 'NaN'], D: ['1', '0,90', '—', '0,62', '—', '0,00'], E: ['2', '0,25', '0,05', '0,96', '0,04', '0,50'] };
+  const keys = ['A', 'B', 'C', 'D', 'E'];
+  for (let j = 0; j < 6; j++) {
+    addCol('emp', EXT_NAMES[j], keys.map(k => ext[k][j]), 'ext');
+    bump('h', 'cols');
+    await wait(260);
+  }
+  await wait(900);
+  hlLine(455);
+  await say('C não tinha filhos, então a linha veio com <code>NaN</code>. <code>num_rows</code> vira 0, e <code>_clear_nans</code> preenche o resto com a média da coluna. Também guarda <code>_max_child_rows = 3</code> e <code>_min_child_rows = 0</code>.', 'HMA');
+  setCell('emp', 2, 3, '0', 'changed');
+  await wait(900);
+  hlLine(470);
+  ['0,52', '0,26', '0,55', '0,16', '0,10'].forEach((v, j) => setCell('emp', 2, 4 + j, `<span class="mean">${v}</span>`, 'changed'));
+  // B e D: scale None → média
+  [[1, 5], [1, 7], [3, 5], [3, 7]].forEach(([r, c]) => setCell('emp', r, c, `<span class="mean">${c === 5 ? '0,26' : '0,16'}</span>`, 'changed'));
+  await wait(2600);
+  const cas = $('#cascade');
+  cas.innerHTML = `<div class="small" style="margin-bottom:8px"><b>Em cascata</b> <span class="muted">· cadeia de 4 tabelas com 1 coluna cada, valores de <code>HMASynthesizer._estimate_num_columns</code></span></div>
+    <div class="chain"><div class="cn"><b id="k4">1</b><span>t4 (folha)</span></div><span class="ar">→</span><div class="cn"><b id="k3">1</b><span>t3</span></div><span class="ar">→</span><div class="cn"><b id="k2">1</b><span>t2</span></div><span class="ar">→</span><div class="cn hot"><b id="k1">1</b><span>t1 (raiz)</span></div></div>`;
+  cas.style.opacity = 1;
+  await say('Em schemas mais fundos isso <b>se repete em cascata</b>: o avô recebe os parâmetros da cópula do pai, que já inclui as colunas estendidas do neto. Cada nível soma 1 + k·n + n(n−1)/2 colunas.', 'HMA');
+  for (const [id, v] of [['k3', 6], ['k2', 41], ['k1', 986]]) {
+    await tween(700, e => { $('#' + id).textContent = Math.round(1 + (v - 1) * e); });
+    await wait(250);
+  }
+  chip('é por isso que existe a trava de 5 tabelas / profundidade 2 (hma.py:261)', 'bad');
+  await wait(2400);
+  await pop('hma'); await pop('hma');
+  await push(['_model_tables()', 'hma.py:517'], 'hma');
+  hlLine(529, 530, 531, 543);
+  await say('Só então vem <code>_model_tables</code>: remove as FKs, limpa NaN e ajusta <b>mais uma cópula por tabela</b>, agora com a tabela empresas larga.', 'HMA');
+  const m = $('#models');
+  for (const [t, d] of [['empresas', '8 colunas (2 + 6 estendidas)'], ['municipios', '7 colunas (1 + 6 estendidas)'], ['estabelecimentos', '2 colunas']]) {
+    m.insertAdjacentHTML('beforeend', op('m-' + t, 'hma on', `GaussianCopula · ${t}`, d));
+    bump('h', 'models');
+    await wait(650);
+  }
+  await wait(3200);
+});
+
+/* 3 · HMA sample raízes + _enforce_table_size */
+scene('_sample e _enforce_table_size', 'hma', 'HMA · sample', async () => {
+  setCounters(H2, I0);
+  setStack([['synth.sample("empresas", 5)', 'base.py:821'], ['_sample()', 'hierarchical_sampler.py:349']], 'hma');
+  setCode(...CODE.hmaSampleRoot);
+  canvasCard.innerHTML = head('HMASynthesizer · sampling das raízes', 'hma', 'BaseHierarchicalSampler') +
+    `<div class="canvas">${tbl('semp', 'sampled_data["empresas"]', 'sintético', [{ n: 'cnpj_basico', c: 'pk' }, { n: 'porte' }, { n: 'capital' }, { n: 'num_rows', c: 'ext' }, { n: '+5 parâmetros', c: 'ext' }], [])}
+      ${tbl('smun', 'sampled_data["municipios"]', 'sintético', [{ n: 'codigo', c: 'pk' }, { n: 'uf' }, { n: 'num_rows', c: 'ext' }], [])}</div>
+    <div class="arrs" id="arrs"></div>
+    <div class="chips" id="chips"></div>`;
+  await say('O sampling do HMA é <b>de cima para baixo</b>. Primeiro, cada raiz é amostrada pelo seu modelo, e as colunas estendidas também saem sintéticas, incluindo <code>num_rows</code>, o número de filhos que cada empresa vai ter.', 'HMA');
+  await push(['_sample_rows(empresas)', 'hierarchical_sampler.py:59'], 'hma');
+  hlLine(386, 388);
+  const sn = [['s0', 'ME', '18k', '2,61'], ['s1', 'EPP', '190k', '1,38'], ['s2', 'ME', '7k', '0,62'], ['s3', 'DEMAIS', '900k', '1,21'], ['s4', 'ME', '22k', '2,44']];
+  for (const r of sn) { addRow('semp', [...r, '…'], ['pk', '', '', 'ext', 'ext q']); await wait(220); }
+  addRow('smun', ['m0', 'SP', '3,8'], ['pk', '', 'ext']); addRow('smun', ['m1', 'RJ', '3,2'], ['pk', '', 'ext']);
+  await pop('hma');
+  await wait(800);
+  hlLine(394);
+  await push(['_sample_children("empresas")', 'hierarchical_sampler.py:228'], 'hma');
+  await push(['_enforce_table_size()', 'hierarchical_sampler.py:156'], 'hma');
+  await say('<code>_enforce_table_size</code> arredonda <code>num_rows</code>, faz o clip entre o mínimo e o máximo vistos (0 e 3) e, num <code>while</code>, soma ou subtrai 1 até o total bater com o tamanho real da tabela filha (7).', 'HMA');
+  hlLine(192, 193);
+  ['3', '1', '1', '1', '2'].forEach((v, i) => setCell('semp', i, 3, v, 'changed'));
+  arr('round + clip(0, 3)', ['3', '1', '1', '1', '2'], '', 'soma 8 ≠ 7');
+  await wait(1800);
+  hlLine(195, 196);
+  arr('while: −1 no maior (argsort)', ['<b>2</b>', '1', '1', '1', '2'], '', 'soma 7 ✓');
+  setCell('semp', 0, 3, '2', 'changed');
+  bump('h', 'loops');
+  await wait(1600);
+  arr('real (A..E)', ['3', '1', '0', '1', '2'], 'ind', 'máx 3');
+  chip('a cauda é <b>modelada como coluna contínua</b> e suavizada: o máximo 3 virou 2', 'bad');
+  chip('no CNPJ: 7.903 estabelecimentos → 127', 'bad');
+  await say('Repare: o HMA não copia a distribuição de filhos, ele <b>amostra</b> <code>num_rows</code> de uma cópula. A empresa com 3 filiais sumiu. No CNPJ real, o máximo caiu de 7.903 para 127.', 'HMA');
+  await wait(4200);
+});
+
+/* 4 · HMA iterrows + concat */
+scene('iterrows e pd.concat', 'hma', 'HMA · sample', async () => {
+  setCounters({ ...H2, loops: 7 }, I0);
+  setStack([['synth.sample("empresas", 5)', 'base.py:821'], ['_sample()', 'hierarchical_sampler.py:349'], ['_sample_children("empresas")', 'hierarchical_sampler.py:228']], 'hma');
+  setCode(...CODE.hmaChildren);
+  const sn = [['s0', 'ME', '18k', '2'], ['s1', 'EPP', '190k', '1'], ['s2', 'ME', '7k', '1'], ['s3', 'DEMAIS', '900k', '1'], ['s4', 'ME', '22k', '2']];
+  canvasCard.innerHTML = head('HMASynthesizer · um filho de cada vez', 'hma', 'loop Python sobre as linhas do pai') +
+    `<div class="canvas">${tbl('semp', 'sampled_data["empresas"]', '', [{ n: 'cnpj_basico', c: 'pk' }, { n: 'porte' }, { n: 'capital' }, { n: 'num_rows', c: 'ext' }], sn)}
+      <span class="arrow">→</span>${op('op', 'hma', '_recreate_child_synthesizer', 'aguardando')}<span class="arrow">→</span>
+      ${tbl('sest', 'sampled_data["estabelecimentos"]', '0 linhas', [{ n: 'cnpj_basico', c: 'fk' }, { n: 'municipio', c: 'fk' }, { n: 'situacao' }, { n: 'inicio' }], [])}</div>
+    <div class="chips" id="chips"></div>`;
+  await say('Agora o coração do custo: <code>for _, row in sampled_data[\'empresas\'].iterrows()</code>. Para <b>cada empresa sintética</b>, o HMA reconstrói uma GaussianCopula a partir dos parâmetros daquela linha e amostra os filhos dela.', 'HMA');
+  hlLine(257, 258);
+  await wait(1200);
+  const kids = { s0: [['ativa', '2016'], ['baixada', '2019']], s1: [['ativa', '2012']], s2: [['ativa', '2017']], s3: [['inapta', '2020']], s4: [['ativa', '2021'], ['ativa', '2023']] };
+  let total = 0, copied = 0;
+  for (let i = 0; i < sn.length; i++) {
+    const pk = sn[i][0], n = +sn[i][3];
+    hlRows('semp', [i]);
+    bump('h', 'loops');
+    if (i === 0) await push(['_add_child_rows(row)', 'hierarchical_sampler.py:96'], 'hma');
+    hlLine(128, 130);
+    setOp('op', `GaussianCopula #${C.h.models + 1}`, `_extract_parameters(linha ${pk}) → _set_parameters`);
+    bump('h', 'models');
+    await wait(950);
+    hlLine(132, 144, 145);
+    setOp('op', `_sample_rows(num_rows=${n})`, `FK = "${pk}" em todas as linhas`);
+    await wait(700);
+    hlLine(148, i === 0 ? 150 : 152);
+    if (i > 0) {
+      copied += total + n;
+      bump('h', 'concat');
+      T('sest').classList.add('flash');
+      setOp('op', 'pd.concat([previous, sampled_rows])', `copia ${total} + ${n} linhas · ${copied} linhas copiadas até aqui`);
+    }
+    for (const [s, d] of kids[pk]) addRow('sest', [pk, '<span class="q">?</span>', s, d], ['fk', 'fk', '', '']);
+    total += n;
+    $('.tt span', T('sest')).textContent = `${total} linhas`;
+    await wait(i > 0 ? 1100 : 700);
+    T('sest').classList.remove('flash');
+  }
+  hlRows('semp', []);
+  await pop('hma');
+  setOp('op', 'loop concluído', `5 cópulas recriadas · ${copied} linhas copiadas`, false);
+  chip('<code>pd.concat</code> dentro do loop copia a tabela acumulada a cada pai → O(n²) em cópias', 'bad');
+  chip('a FK <b>municipio</b> ainda está vazia: só a 1ª relação gera os filhos', 'hma');
+  await say('Cada <code>pd.concat</code> copia tudo o que já foi gerado, então o custo de cópia cresce de forma quadrática. Depois, a recursão chama <code>_sample_children(\'estabelecimentos\')</code>, que não tem filhos. A FK <code>municipio</code> ainda está vazia.', 'HMA');
+  await wait(4200);
+});
+
+/* 5 · HMA likelihoods */
+scene('_find_parent_ids', 'hma', 'HMA · sample', async () => {
+  setCounters(H4, I0);
+  setStack([['synth.sample("empresas", 5)', 'base.py:821'], ['_sample()', 'hierarchical_sampler.py:349'], ['_add_foreign_key_columns(est, mun)', 'hma.py:757'], ['_find_parent_ids()', 'hma.py:726']], 'hma');
+  setCode(...CODE.hmaLikelihood);
+  const EST_S = [['s0', 'ativa'], ['s0', 'baixada'], ['s1', 'ativa'], ['s2', 'ativa'], ['s3', 'inapta'], ['s4', 'ativa'], ['s4', 'ativa']];
+  canvasCard.innerHTML = head('HMASynthesizer · FKs das outras relações', 'hma', 'municipios → estabelecimentos') +
+    `<div class="canvas">
+      <div class="tbl"><div class="tt"><b>likelihoods</b><span>linhas filhas × pais</span></div><div class="scroll">
+      <table class="mtx" id="mtx"><thead><tr><th>filho</th><th>m0 <span class="muted" id="nr0">(4)</span></th><th>m1 <span class="muted" id="nr1">(3)</span></th><th>escolhido</th></tr></thead>
+      <tbody>${EST_S.map((r, i) => `<tr><th>#${i} ${r[0]}</th><td></td><td></td><td></td></tr>`).join('')}</tbody></table></div></div>
+      ${op('op', 'hma', '_get_likelihoods', 'aguardando')}
+    </div>
+    <div class="chips" id="chips"></div>`;
+  await say('Depois da DFS, <code>_sample</code> percorre as relações restantes. A FK <code>municipio</code> é preenchida por <code>_find_parent_ids</code>, que calcula a <b>verossimilhança de cada linha filha sob o modelo de cada pai</b>.', 'HMA');
+  hlLine(750, 751, 754);
+  await wait(1200);
+  await push(['_get_likelihoods()', 'hma.py:674'], 'hma');
+  const L = [[0.71, 0.29], [0.38, 0.62], [0.55, 0.45], [0.66, 0.34], [0.81, 0.19], [0.47, 0.53], [0.52, 0.48]];
+  const mrows = $$('#mtx tbody tr');
+  for (let p = 0; p < 2; p++) {
+    hlLine(701, 702, 704, 709);
+    bump('h', 'loops'); bump('h', 'models');
+    setOp('op', `iterrows → m${p}`, `recria GaussianCopula #${C.h.models} com os parâmetros de m${p}`, true);
+    await wait(900);
+    hlLine(711);
+    setOp('op', `_get_likelihood(table_rows)`, `avalia as 7 linhas filhas sob m${p}`, true);
+    for (let i = 0; i < 7; i++) { const td = mrows[i].children[1 + p]; td.textContent = L[i][p].toFixed(2).replace('.', ','); td.classList.add('on'); await wait(110); }
+    await wait(500);
+  }
+  await pop('hma');
+  await say('Com a matriz pronta, <code>likelihoods.apply(self._find_parent_id, axis=1)</code> sorteia um pai <b>para cada linha filha</b>, ponderado pela verossimilhança, e desconta 1 do <code>num_rows</code> do pai escolhido.', 'HMA');
+  hlLine(755, 668, 670);
+  const pick = [0, 1, 0, 0, 0, 1, 1];
+  const nr = [4, 3];
+  for (let i = 0; i < 7; i++) {
+    bump('h', 'loops');
+    const td = mrows[i].children[1 + pick[i]];
+    td.classList.add('pick');
+    mrows[i].children[3].textContent = 'm' + pick[i];
+    nr[pick[i]]--;
+    $('#nr' + pick[i]).textContent = `(${nr[pick[i]]})`;
+    await wait(420);
+  }
+  setOp('op', 'O(pais × filhos)', '2 × 7 avaliações aqui · no CNPJ, milhões × milhares', false);
+  chip('cada pai recria um modelo e avalia <b>todas</b> as linhas filhas', 'bad');
+  chip('por fim, <code>_finalize</code> converte os tipos de volta', '');
+  await say('É o passo mais caro quando a FK precisa ser inferida: O(pais × filhos). No benchmark CNPJ com 30 mil linhas, o sample do HMA levou <b>776 s</b>.', 'HMA');
+  await wait(4200);
+});
+
+/* 6 · Independent _augment_tables */
+scene('_augment_tables', 'ind', 'Independent · fit', async () => {
+  setCounters(H5, I0);
+  setStack([['synth.fit(data)', 'base.py:701'], ['fit_processed_data()', 'base.py:668'], ['_augment_tables()', 'independent.py:60']], 'ind');
+  setCode(...CODE.indAugment);
+  canvasCard.innerHTML = head('IndependentSynthesizer · _augment_tables', 'ind', 'nenhuma coluna nova: só números por relação') +
+    `<div class="canvas">${tbl('est', 'estabelecimentos', 'processado', EST_COLS, EST)}
+      <span class="arrow">→</span>
+      ${tbl('cnt', 'counts', 'value_counts().reindex(parent_keys)', [{ n: 'empresa', c: 'pk' }, { n: 'filhos' }], [])}
+      <span class="arrow">→</span>
+      <div class="tbl"><div class="tt"><b>np.bincount(counts)</b><span>_cardinality</span></div><div style="padding:8px 12px"><div class="hist" id="hist"></div><div class="small muted" style="font-size:10.5px">nº de filhos por pai</div></div></div>
+    </div>
+    <div class="chips" id="chips"></div>`;
+  await say('No Independent, <code>_augment_tables</code> não ajusta nenhum modelo. Para cada relação, ele só <b>conta</b> quantos filhos cada pai tem, com uma operação vetorizada do pandas.', 'Independent');
+  hlLine(71, 72);
+  chip('_table_sizes = {empresas: 5, municipios: 2, estabelecimentos: 7}', 'ind');
+  await wait(1400);
+  hlLine(74, 80);
+  $$('tbody tr', T('est')).forEach(tr => tr.children[0].classList.add('hl'));
+  rows('est').forEach(r => r.classList.add('hl'));
+  await wait(900);
+  hlLine(85, 86);
+  const counts = [['A', 3], ['B', 1], ['C', 0], ['D', 1], ['E', 2]];
+  for (const [k, v] of counts) { addRow('cnt', [k, v], ['pk', k === 'C' ? 'ok' : '']); await wait(220); }
+  rows('est').forEach(r => r.classList.remove('hl'));
+  await say('<code>reindex(parent_keys, fill_value=0)</code> garante que <b>C entra com 0 filhos</b>: pais sem filhos fazem parte da distribuição. Depois, <code>np.bincount</code> resume tudo num histograma.', 'Independent');
+  await wait(1200);
+  hlLine(88);
+  const bc = [1, 2, 1, 1];
+  $('#hist').innerHTML = bc.map((v, i) => `<div class="hb"><span class="v">${v}</span><b data-h="${v / 2 * 100}"></b><span>${i}</span></div>`).join('');
+  await wait(50);
+  $$('#hist b').forEach(b => b.style.height = b.dataset.h * .7 + '%');
+  chip('_cardinality[...cnpj_basico] = [1, 2, 1, 1]', 'ind');
+  await wait(1400);
+  hlLine(89, 90, 91);
+  chip('_null_foreign_key_rates = 0,0', 'ind');
+  await wait(900);
+  chip('municipios → estabelecimentos: bincount([4, 3]) = [0, 0, 0, 1, 1]', 'ind');
+  await say('São <b>dois números por relação</b>: o histograma de filhos por pai e a taxa de FK nula. Não há cópula por pai, colunas novas nem cascata: o custo é O(linhas), e a profundidade do schema não importa.', 'Independent');
+  await wait(4200);
+});
+
+/* 7 · Independent _model_tables */
+scene('_model_tables', 'ind', 'Independent · fit', async () => {
+  setCounters(H5, I0);
+  setStack([['synth.fit(data)', 'base.py:701'], ['fit_processed_data()', 'base.py:668'], ['_model_tables()', 'independent.py:95']], 'ind');
+  setCode(...CODE.indModel);
+  canvasCard.innerHTML = head('IndependentSynthesizer · _model_tables', 'ind', '1 synthesizer single-table por tabela') +
+    `<div class="canvas">${tbl('emp', 'empresas', '', EMP_COLS, EMP)}${tbl('mun', 'municipios', '', MUN_COLS, MUN)}${tbl('est', 'estabelecimentos', '', EST_COLS, EST)}</div>
+    <div class="canvas" id="models"></div>
+    <div class="chips" id="chips"></div>`;
+  await say('<code>_model_tables</code> percorre as tabelas uma vez. De cada uma, <b>remove as colunas de FK</b> (que serão reconstruídas no sampling) e ajusta o synthesizer single-table configurado, GaussianCopula por padrão.', 'Independent');
+  hlLine(103, 104, 105, 106, 107, 108, 109);
+  await wait(1300);
+  hlLine(110);
+  const t = T('est');
+  [0, 1].forEach(c => { $$('thead th', t)[c].classList.add('drop'); rows('est').forEach(r => r.children[c].classList.add('drop')); });
+  await wait(1200);
+  hlLine(112, 113);
+  const m = $('#models');
+  for (const [tn, d] of [['empresas', '2 colunas: porte, capital'], ['municipios', '1 coluna: uf'], ['estabelecimentos', '2 colunas: situacao, inicio']]) {
+    m.insertAdjacentHTML('beforeend', op('m-' + tn, 'ind on', `GaussianCopula · ${tn}`, d));
+    bump('i', 'models');
+    await wait(700);
+  }
+  chip('empresas continua com <b>2</b> colunas modeladas (no HMA: 8)', 'ind');
+  chip('3 modelos, independente do número de linhas', 'ind');
+  await say('O fit termina com <b>3 modelos</b>, um por tabela, cada um vendo só as suas próprias colunas. No HMA foram 9 modelos neste mini-dataset, e esse número cresce com cada empresa a mais.', 'Independent');
+  await wait(4200);
+});
+
+/* 8 · Independent _sample + fila */
+scene('_sample e _connect_tables', 'ind', 'Independent · sample', async () => {
+  setCounters(H5, I7);
+  setStack([['synth.sample("empresas", 5)', 'base.py:821'], ['_sample()', 'independent_sampler.py:155']], 'ind');
+  setCode(...CODE.indSample);
+  canvasCard.innerHTML = head('IndependentSynthesizer · sampling', 'ind', 'BaseIndependentSampler') +
+    `<div class="canvas">
+      ${tbl('semp', 'empresas', 'sintético', [{ n: 'cnpj_basico', c: 'pk' }, { n: 'porte' }, { n: 'capital' }], [])}
+      ${tbl('smun', 'municipios', 'sintético', [{ n: 'codigo', c: 'pk' }, { n: 'uf' }], [])}
+      ${tbl('sest', 'estabelecimentos', 'sintético', [{ n: 'cnpj_basico', c: 'fk' }, { n: 'municipio', c: 'fk' }, { n: 'situacao' }, { n: 'inicio' }], [])}
+    </div>
+    <div class="arrs" id="arrs"></div>
+    <div class="chips" id="chips"></div>`;
+  await say('No sampling, <b>cada tabela é amostrada de uma vez</b> pelo seu próprio modelo, com <code>num_rows = _table_sizes × scale</code>. Nada de loop por pai: são 3 chamadas de sample, uma por tabela.', 'Independent');
+  hlLine(187, 188, 193, 196);
+  await push(['_sample_table() × 3', 'independent_sampler.py:42'], 'ind');
+  const E = [['s0', 'ME', '18k'], ['s1', 'EPP', '190k'], ['s2', 'ME', '7k'], ['s3', 'DEMAIS', '900k'], ['s4', 'ME', '22k']];
+  const ES = [['ativa', '2016'], ['baixada', '2019'], ['ativa', '2012'], ['ativa', '2017'], ['inapta', '2020'], ['ativa', '2021'], ['ativa', '2023']];
+  for (let i = 0; i < 7; i++) {
+    if (E[i]) addRow('semp', E[i], ['pk', '', '']);
+    if (i < 2) addRow('smun', [['m0', 'SP'], ['m1', 'RJ']][i], ['pk', '']);
+    addRow('sest', ['<span class="q">?</span>', '<span class="q">?</span>', ...ES[i]], ['fk', 'fk', '', '']);
+    await wait(140);
+  }
+  await pop('ind');
+  chip('as FKs ficam vazias: os modelos foram treinados sem elas', 'ind');
+  await wait(1600);
+  hlLine(209);
+  await push(['_connect_tables()', 'independent_sampler.py:77'], 'ind');
+  await say('<code>_connect_tables</code> liga as tabelas com uma <b>busca em largura</b>: a fila começa com as raízes e, para cada filho, chama <code>_add_foreign_key_columns</code>. Um filho só entra na fila quando <b>todas</b> as suas FKs foram preenchidas.', 'Independent');
+  hlLine(87, 88, 89);
+  arr('queue', ['empresas', 'municipios'], 'ind');
+  await wait(1500);
+  hlLine(90, 91, 92, 93);
+  arr('pop → empresas', ['estabelecimentos'], 'fk', '_add_foreign_key_columns(est, empresas)');
+  await wait(2600);
+});
+
+/* 9 · Independent _sample_foreign_key_values */
+scene('_sample_foreign_key_values', 'ind', 'Independent · sample', async () => {
+  setCounters(H5, I7);
+  setStack([['synth.sample("empresas", 5)', 'base.py:821'], ['_sample()', 'independent_sampler.py:155'], ['_connect_tables()', 'independent_sampler.py:77'], ['_add_foreign_key_columns(est, empresas)', 'independent.py:149']], 'ind');
+  setCode(...CODE.indFk);
+  const ES = [['ativa', '2016'], ['baixada', '2019'], ['ativa', '2012'], ['ativa', '2017'], ['inapta', '2020'], ['ativa', '2021'], ['ativa', '2023']];
+  canvasCard.innerHTML = head('IndependentSynthesizer · atribuição vetorizada', 'ind', 'empresas → estabelecimentos') +
+    `<div class="arrs" id="arrs"></div>
+    <div class="canvas">${tbl('sest', 'estabelecimentos', 'sintético', [{ n: 'cnpj_basico', c: 'fk' }, { n: 'municipio', c: 'fk' }, { n: 'situacao' }, { n: 'inicio' }], ES.map(r => [{ v: '<span class="q">?</span>' }, { v: '<span class="q">?</span>' }, ...r]))}</div>
+    <div class="chips" id="chips"></div>`;
+  await say('Tudo em NumPy, sem loop por linha. Primeiro, os nulos: <code>round(7 × 0,0) = 0</code>. Depois, <code>_sample_foreign_key_values</code> reconstrói o <b>multiconjunto real</b> de contagens a partir do histograma.', 'Independent');
+  hlLine(176, 177, 178);
+  await wait(900);
+  await push(['_sample_foreign_key_values()', 'independent.py:116'], 'ind');
+  hlLine(128);
+  arr('cardinality', ['1', '2', '1', '1'], '', '← bincount do fit');
+  await wait(700);
+  arr('real_counts = np.repeat(arange, card)', ['0', '1', '1', '2', '3'], 'ind', 'as contagens reais de A..E');
+  await wait(1500);
+  hlLine(132);
+  arr('divmod(5 pais, 5 contagens)', ['1', '0'], '', 'repeats = 1, remainder = 0');
+  await say('<code>divmod</code> decide quantas vezes o conjunto inteiro se repete (<code>np.tile</code>) e quantas contagens extras saem <b>sem reposição</b>. Com <code>scale=1</code>, cada contagem real é usada exatamente uma vez, <b>inclusive a cauda</b>.', 'Independent');
+  hlLine(133, 134, 135, 136);
+  await wait(1600);
+  hlLine(137);
+  arr('counts = permutation(...)', ['1', '<b>3</b>', '0', '2', '1'], 'hot', 's0..s4');
+  await wait(1500);
+  hlLine(139);
+  const vals = ['s0', 's1', 's1', 's1', 's3', 's3', 's4'];
+  arr('values = np.repeat(parent_keys, counts)', vals, 'fk', 'len 7 = filhos ✓');
+  await wait(1300);
+  hlLine(140, 141);
+  chip('soma = 7 = linhas filhas: nenhum ajuste necessário', 'ok');
+  await wait(1100);
+  await pop('ind');
+  hlLine(186);
+  const perm = ['s1', 's3', 's0', 's1', 's4', 's3', 's1'];
+  arr('np.random.permutation(values)', perm, 'fk', '→ coluna FK');
+  await wait(600);
+  for (let i = 0; i < 7; i++) { setCell('sest', i, 0, perm[i], 'changed'); await wait(120); }
+  chip('s1 ficou com <b>3 filhos</b>: a cauda real foi preservada', 'ok');
+  await wait(1600);
+  await say('A mesma rotina roda para <code>municipios</code>: <code>real_counts = [3, 4]</code>, então um município recebe 4 filhos e o outro 3. Como agora todas as FKs de <code>estabelecimentos</code> existem, ele entra na fila, sai sem filhos e o BFS termina.', 'Independent');
+  setStack([['synth.sample("empresas", 5)', 'base.py:821'], ['_sample()', 'independent_sampler.py:155'], ['_connect_tables()', 'independent_sampler.py:77'], ['_add_foreign_key_columns(est, municipios)', 'independent.py:149']], 'ind');
+  const mperm = ['m0', 'm1', 'm0', 'm0', 'm1', 'm0', 'm1'];
+  arr('municipios: permutation(repeat)', mperm, 'fk', 'm0 × 4, m1 × 3');
+  for (let i = 0; i < 7; i++) { setCell('sest', i, 1, mperm[i], 'changed'); await wait(110); }
+  chip('integridade referencial por construção: toda FK vem de <code>parent_keys</code>', 'ind');
+  await wait(1200);
+  chip('1-para-1 (FK = PK): <code>np.random.choice(parent_keys, replace=False)</code>', '');
+  await wait(3600);
+});
+
+/* 10 · lado a lado */
+scene('Lado a lado', 'both', 'Resumo', async () => {
+  setCounters(H5, I7);
+  setStack([['synth.sample(...)', 'base.py:821'], ['_finalize()', 'sampler · dtypes originais']], 'base');
+  setCode('resumo', [
+    [null, ''],
+  ]);
+  $('#code').innerHTML = `<div style="padding:8px 16px;color:#aab1bd;font-size:12px;line-height:1.7">
+    <div style="color:#f2c66d">HMA · por linha</div>
+    <div>hma.py:341 &nbsp;for fk in foreign_key_values → GaussianCopula</div>
+    <div>hierarchical_sampler.py:258 &nbsp;for row in iterrows() → recria modelo</div>
+    <div>hierarchical_sampler.py:152 &nbsp;pd.concat dentro do loop</div>
+    <div>hma.py:701 &nbsp;for parent in iterrows() → likelihood × filhos</div>
+    <div style="color:#8fb7ff;margin-top:10px">Independent · por tabela / relação</div>
+    <div>independent.py:86 &nbsp;value_counts().reindex()</div>
+    <div>independent.py:88 &nbsp;np.bincount</div>
+    <div>independent.py:139 &nbsp;np.repeat(parent_keys, counts)</div>
+    <div>independent.py:186 &nbsp;np.random.permutation</div></div>`;
+  $('#code-file').textContent = 'onde está o custo';
+  canvasCard.innerHTML = head('Lado a lado', '', 'o que cada passo custa') +
+    `<table class="cmp" id="sum"><thead><tr><th>Passo</th><th>HMASynthesizer</th><th>IndependentSynthesizer</th></tr></thead><tbody>
+      <tr class="hid"><td>Modelos no fit</td><td class="h">1 por tabela <b>+ 1 por linha de cada pai</b></td><td class="i">1 por tabela</td></tr>
+      <tr class="hid"><td>Colunas do pai</td><td class="h">+1 + k·n + n(n−1)/2 por FK, <b>em cascata</b> (1 → 6 → 41 → 986)</td><td class="i">inalteradas</td></tr>
+      <tr class="hid"><td>Cardinalidade</td><td class="h">coluna <code>num_rows</code> amostrada de cópula → suaviza a cauda</td><td class="i">contagens reais reamostradas sem reposição → exata com <code>scale=1</code></td></tr>
+      <tr class="hid"><td>Sampling dos filhos</td><td class="h"><code>iterrows</code> por pai, modelo recriado, <code>pd.concat</code> no loop</td><td class="i">1 sample por tabela</td></tr>
+      <tr class="hid"><td>FKs das outras relações</td><td class="h">likelihood O(pais × filhos)</td><td class="i"><code>np.repeat</code> + <code>permutation</code>, O(linhas)</td></tr>
+      <tr class="hid"><td>Correlação entre tabelas</td><td class="h"><span class="y">✓</span> filhos condicionados aos parâmetros do pai</td><td class="i"><span class="n">✕</span> só a cardinalidade liga as tabelas</td></tr>
+    </tbody></table>
+    <div class="canvas" id="bench" style="opacity:0;transition:opacity .4s">
+      ${op('b1', 'hma on', 'fit · 42,66 s', 'HMA · CNPJ core · 30 mil linhas')}
+      ${op('b2', 'ind on', 'fit · 1,83 s', 'Independent · 23× mais rápido')}
+      ${op('b3', 'hma on', 'sample · 776,04 s', 'HMA')}
+      ${op('b4', 'ind on', 'sample · 4,49 s', 'Independent · 173× mais rápido')}
+    </div>
+    <div class="chips" id="chips"></div>`;
+  await say('Juntando tudo: o HMA <b>compra correlação entre tabelas</b> condicionando cada filho aos parâmetros do pai, e paga com trabalho <b>proporcional ao número de linhas</b>. O Independent <b>abre mão dessa correlação</b> e faz só trabalho por tabela e por relação.', 'Resumo');
+  for (const tr of $$('#sum tbody tr')) { tr.classList.remove('hid'); await wait(700); }
+  await wait(1200);
+  $('#bench').style.opacity = 1;
+  await say('No benchmark com dados reais do CNPJ (30 mil linhas, 4 tabelas), essa diferença estrutural vira <b>23×</b> no fit e <b>173×</b> no sample. Com 5,57 milhões de linhas e 10 tabelas, só o Independent chega ao fim (477 s).', 'Resumo');
+  chip('cauda: HMA 127 · Independent 7.903 · real 7.903', 'ind');
+  chip('1 matriz por empresa: HMA 79,5% · Independent 45,9%', 'hma');
+  await wait(5200);
+  await say('Fim. Use <b>↺ Recomeçar</b> ou escolha uma cena. Próximo passo natural para o Independent: condicionar filhos a 1 ou 2 colunas do pai para recuperar correlações específicas com custo O(linhas).', 'Fim');
+});
+
+/* ================= controle ================= */
+const nav = $('#chapters');
+let lastGroup = '';
+SCENES.forEach((s, i) => {
+  if (s.group !== lastGroup) { nav.insertAdjacentHTML('beforeend', `<span class="grp">${s.group}</span>`); lastGroup = s.group; }
+  const b = document.createElement('button');
+  b.dataset.who = s.who; b.dataset.i = i;
+  b.innerHTML = `<span class="dot"></span>${s.title}`;
+  b.addEventListener('click', () => playFrom(i));
+  nav.appendChild(b);
+});
+function updateNav() {
+  $$('#chapters button').forEach(b => {
+    const i = +b.dataset.i;
+    b.classList.toggle('active', i === S.scene);
+    b.classList.toggle('done', i < S.scene);
+    if (i === S.scene) b.setAttribute('aria-current', 'step'); else b.removeAttribute('aria-current');
+  });
+  $('#progress').style.width = ((S.scene + 1) / SCENES.length * 100) + '%';
+}
+const btnPlay = $('#btn-play');
+function setPaused(p) { S.paused = p; btnPlay.textContent = p ? '▶ Continuar' : '❚❚ Pausar'; }
+async function playFrom(i) {
+  S.run++; S.ended = false;
+  setPaused(false);
+  try {
+    for (let k = i; k < SCENES.length; k++) {
+      S.scene = k; updateNav();
+      stackNow = [];
+      await SCENES[k].run();
+      if (k < SCENES.length - 1) await wait(900);
+    }
+    S.ended = true;
+    btnPlay.textContent = '↺ Repetir';
+  } catch (e) { if (e !== CANCEL) console.error(e); }
+}
+btnPlay.addEventListener('click', () => { if (S.ended) return playFrom(0); setPaused(!S.paused); });
+$('#btn-restart').addEventListener('click', () => playFrom(0));
+$('#btn-prev').addEventListener('click', () => playFrom(Math.max(0, S.scene - 1)));
+$('#btn-next').addEventListener('click', () => playFrom(Math.min(SCENES.length - 1, S.scene + 1)));
+$('#speed').addEventListener('change', e => { S.speed = parseFloat(e.target.value); });
+document.addEventListener('keydown', e => {
+  if (e.target.closest('select, input, textarea')) return;
+  if (e.code === 'Space') { e.preventDefault(); btnPlay.click(); }
+  else if (e.key === 'ArrowRight') $('#btn-next').click();
+  else if (e.key === 'ArrowLeft') $('#btn-prev').click();
+});
+playFrom(0);
+})();
+</script>
+</body>
+</html>
