@@ -369,3 +369,98 @@ def generate_multi_table_schema(
 
     metadata = Metadata.load_from_dict({'tables': tables, 'relationships': relationships})
     return data, metadata
+
+
+def generate_correlated_parent_child(num_parents=2000, seed=0):
+    """Generate a parent/child dataset with known correlations between the tables.
+
+    * ``parent.size`` (numerical, log-normal) drives ``parent.segment`` (categorical), the number
+      of children of every parent and ``child.amount``.
+    * ``parent.tier`` (categorical, independent of ``size``) shifts ``child.discount`` with a
+      non-monotonic effect (``bronze < silver < gold`` with ``silver`` the most frequent).
+    * The first child of every parent has ``kind == 'HQ'`` and the others ``'BRANCH'``.
+    * Children of the same parent share a random effect in ``child.score`` and usually share
+      ``child.region``.
+    * About 5% of the children have a null foreign key.
+
+    Args:
+        num_parents (int):
+            Number of rows of the parent table.
+        seed (int):
+            Seed for the random generator.
+
+    Returns:
+        tuple[dict, Metadata]:
+            The data and the metadata.
+    """
+    rng = np.random.default_rng(seed)
+    log_size = rng.normal(0, 1, num_parents)
+    parent = pd.DataFrame({
+        'parent_id': np.arange(num_parents),
+        'size': np.round(np.exp(log_size) * 100, 2),
+        'segment': np.where(log_size > 0.5, 'large', np.where(log_size > -0.5, 'mid', 'small')),
+        'tier': rng.choice(['silver', 'bronze', 'gold'], num_parents, p=[0.5, 0.3, 0.2]),
+    })
+    tier_effect = parent['tier'].map({'bronze': -1.5, 'silver': 0.0, 'gold': 1.5}).to_numpy()
+    counts = rng.poisson(np.exp(0.8 * log_size))
+    parent_index = np.repeat(np.arange(num_parents), counts)
+    num_children = len(parent_index)
+    position = pd.Series(parent_index).groupby(parent_index).cumcount().to_numpy()
+    group_effect = rng.normal(0, 1, num_parents)
+    regions = np.array(['N', 'S', 'E', 'W', 'C'])
+    parent_region = rng.integers(0, len(regions), num_parents)
+    same_region = rng.random(num_children) < 0.8
+    child_region = np.where(
+        same_region, parent_region[parent_index], rng.integers(0, len(regions), num_children)
+    )
+    foreign_keys = parent_index.astype(float)
+    foreign_keys[rng.random(num_children) < 0.05] = np.nan
+    child = pd.DataFrame({
+        'child_id': np.arange(num_children),
+        'parent_id': foreign_keys,
+        'amount': np.round(
+            np.exp(0.7 * log_size[parent_index] + rng.normal(0, 0.7, num_children)) * 10, 2
+        ),
+        'score': np.round(
+            0.8 * group_effect[parent_index] + 0.6 * rng.normal(0, 1, num_children), 3
+        ),
+        'discount': np.round(tier_effect[parent_index] + rng.normal(0, 1, num_children), 3),
+        'region': regions[child_region],
+        'kind': np.where(position == 0, 'HQ', 'BRANCH'),
+    })
+    # shuffle the children so the order of the rows carries no information
+    child = child.sample(frac=1, random_state=seed).reset_index(drop=True)
+    metadata = Metadata.load_from_dict({
+        'tables': {
+            'parent': {
+                'primary_key': 'parent_id',
+                'columns': {
+                    'parent_id': {'sdtype': 'id'},
+                    'size': {'sdtype': 'numerical'},
+                    'segment': {'sdtype': 'categorical'},
+                    'tier': {'sdtype': 'categorical'},
+                },
+            },
+            'child': {
+                'primary_key': 'child_id',
+                'columns': {
+                    'child_id': {'sdtype': 'id'},
+                    'parent_id': {'sdtype': 'id'},
+                    'amount': {'sdtype': 'numerical'},
+                    'score': {'sdtype': 'numerical'},
+                    'discount': {'sdtype': 'numerical'},
+                    'region': {'sdtype': 'categorical'},
+                    'kind': {'sdtype': 'categorical'},
+                },
+            },
+        },
+        'relationships': [
+            {
+                'parent_table_name': 'parent',
+                'child_table_name': 'child',
+                'parent_primary_key': 'parent_id',
+                'child_foreign_key': 'parent_id',
+            }
+        ],
+    })
+    return {'parent': parent, 'child': child}, metadata
