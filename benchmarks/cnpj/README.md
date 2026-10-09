@@ -46,6 +46,39 @@ Every configuration runs in its own subprocess. The parent tracks the peak physi
 kills the run above `--memory-limit-gb` (default 80% of RAM) or `--timeout`. Results are
 appended to `results.jsonl` in the sample folder.
 
+### Inter-table correlation options
+
+`--correlation` enables the correlation options of the `IndependentSynthesizer` (see
+[`../EXPERIMENTO-CORRELACAO.pt-BR.md`](../EXPERIMENTO-CORRELACAO.pt-BR.md)):
+
+| Token | Option |
+|---|---|
+| `T1` | `lookup_tables`: the domain tables (`full` variant only) |
+| `T2` | `model_cardinality=True` |
+| `T2S` | `cardinality_by`: children counts stratified by `porte_empresa` |
+| `T3` | `context_columns`: `porte_empresa`, `natureza_juridica`, `capital_social` |
+| `T3C` | `context_columns`: `porte_empresa`, `natureza_juridica` |
+| `T4` | `sibling_order` of the establishments by `identificador_matriz_filial` |
+| `T4R` | `group_rules`: one headquarters (`1`) per company, the others `2` |
+| `T5` | `sibling_correlation=True` |
+| `FC` | `FixedCombinations(['uf', 'municipio'])` on the establishments |
+
+```bash
+python benchmarks/cnpj/run.py --sample-dir ~/.cache/sdv-cnpj/2026-09/sample_0.05 \
+    --variant core --fractions 0.001 --correlation FC T2S T3C T4 T4R T5 --sdmetrics --repeat 3
+```
+
+* `--encoding plan` uses the encodings of the original plan (`categorical_context='processed'`,
+  `sibling_categorical='latent'`) for comparison.
+* `--sdmetrics` adds the sdmetrics `QualityReport` on a subset of 2,000 companies.
+* `--label` names the configuration in `results.jsonl`; `--repeat` repeats every fraction.
+* Correlation metrics are always reported: Spearman of company attributes vs children counts,
+  Cramér's V of company/child column pairs, sibling similarity (pairs and mean per company) and
+  the share of synthetic (`uf`, `municipio`) pairs that exist in the real data.
+
+The full comparative campaign is in `benchmarks/correlation/run_cnpj_campaign.sh` and
+`run_cnpj_campaign_e.sh`.
+
 ### Schema variants
 
 | Variant | Tables | Depth | Notes |

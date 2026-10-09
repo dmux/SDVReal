@@ -3,6 +3,8 @@
 > Fork `dmux/SDVReal` · branch `feature/independent-multi-table-synthesizer` · Issue [#1](https://github.com/dmux/SDVReal/issues/1)
 > Relacionados: [`BENCHMARK.pt-BR.md`](BENCHMARK.pt-BR.md) · [`PLANO-OTIMIZACAO.pt-BR.md`](PLANO-OTIMIZACAO.pt-BR.md) · [`CONCEITOS-SDV.pt-BR.md`](CONCEITOS-SDV.pt-BR.md)
 
+> **Resultado do experimento:** o plano foi implementado e medido na branch `experiment/inter-table-correlation`. Resultados, desvios, melhorias e metas revistas em [`EXPERIMENTO-CORRELACAO.pt-BR.md`](EXPERIMENTO-CORRELACAO.pt-BR.md).
+
 **Sobre os números.** Custos e ganhos neste documento são **estimativas** até serem medidos com a escada do CNPJ (seção 8). Os valores marcados como "hoje" vêm do benchmark.
 
 ---
