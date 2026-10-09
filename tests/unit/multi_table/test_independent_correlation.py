@@ -314,6 +314,54 @@ class TestIndependentSynthesizerCorrelation:
         assert spearman > 0.4
         metadata.validate_data(synthetic)
 
+    def test_cardinality_by_strata(self):
+        """Test that the counts follow the real counts of every stratum of the parent."""
+        # Setup
+        rng = np.random.default_rng(0)
+        segment = rng.choice(['big', 'small'], 3000)
+        counts = np.where(segment == 'big', rng.poisson(5, 3000), rng.poisson(0.3, 3000))
+        parent = pd.DataFrame({'id': np.arange(3000), 'segment': segment})
+        child = pd.DataFrame({
+            'id': np.arange(counts.sum()),
+            'parent_id': np.repeat(np.arange(3000), counts),
+        })
+        metadata = Metadata.load_from_dict({
+            'tables': {
+                'parent': {
+                    'primary_key': 'id',
+                    'columns': {'id': {'sdtype': 'id'}, 'segment': {'sdtype': 'categorical'}},
+                },
+                'child': {
+                    'primary_key': 'id',
+                    'columns': {'id': {'sdtype': 'id'}, 'parent_id': {'sdtype': 'id'}},
+                },
+            },
+            'relationships': [
+                {
+                    'parent_table_name': 'parent',
+                    'child_table_name': 'child',
+                    'parent_primary_key': 'id',
+                    'child_foreign_key': 'parent_id',
+                }
+            ],
+        })
+        instance = IndependentSynthesizer(
+            metadata, verbose=False, cardinality_by={'child': ['segment']}
+        )
+
+        # Run
+        instance.fit({'parent': parent, 'child': child})
+        synthetic = instance.sample('parent', 3000)
+
+        # Assert
+        fake_counts = synthetic['child']['parent_id'].value_counts()
+        fake_counts = fake_counts.reindex(synthetic['parent']['id'], fill_value=0).to_numpy()
+        means = pd.Series(fake_counts).groupby(synthetic['parent']['segment'].to_numpy()).mean()
+        assert means['big'] == pytest.approx(5, abs=0.3)
+        assert means['small'] == pytest.approx(0.3, abs=0.1)
+        assert ks_2samp(counts, fake_counts).statistic < 0.02
+        metadata.validate_data(synthetic)
+
     def test_one_to_one_cardinality(self):
         """Test that one-to-one children follow the modeled score of the parent."""
         # Setup

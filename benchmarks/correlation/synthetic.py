@@ -22,11 +22,11 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.dirname(os.path.dirname(HERE)))
 
-import metrics  # noqa: E402
 from scipy.stats import ks_2samp  # noqa: E402
-
-from sdv.multi_table import IndependentSynthesizer  # noqa: E402
 from tests.utils import generate_correlated_parent_child  # noqa: E402
+
+import metrics  # noqa: E402
+from sdv.multi_table import IndependentSynthesizer  # noqa: E402
 
 T2 = {'model_cardinality': True}
 T3 = {'context_columns': {'child': {'parent': ['size', 'segment', 'tier']}}}
@@ -72,6 +72,7 @@ def evaluate(data, metadata):
 
 
 def run(config_name, data, metadata, real_metrics):
+    """Fit and sample one configuration and compare its metrics with the real ones."""
     synthesizer = IndependentSynthesizer(metadata, verbose=False, **CONFIGS[config_name])
     start = time.perf_counter()
     synthesizer.fit(data)
@@ -105,6 +106,7 @@ def run(config_name, data, metadata, real_metrics):
 
 
 def main():
+    """Run every configuration for every seed and append the results as JSON lines."""
     parser = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     parser.add_argument('--num-parents', type=int, default=20_000)
     parser.add_argument('--seeds', type=int, nargs='+', default=[0])

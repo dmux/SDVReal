@@ -68,6 +68,24 @@ def sibling_same_value(child_keys, values):
     return float((value_sizes * (value_sizes - 1) / 2).sum() / pairs)
 
 
+def sibling_same_value_per_parent(child_keys, values):
+    """Mean over the parents with 2+ children of their share of sibling pairs with equal value.
+
+    Unlike ``sibling_same_value``, every parent weighs the same, so a single parent with
+    thousands of children does not dominate the metric.
+    """
+    frame = pd.DataFrame({'key': np.asarray(child_keys), 'value': np.asarray(values)}).dropna()
+    group_sizes = frame.groupby('key').size()
+    pairs = group_sizes * (group_sizes - 1) / 2
+    value_sizes = frame.groupby(['key', 'value']).size()
+    same = (value_sizes * (value_sizes - 1) / 2).groupby(level='key').sum()
+    pairs = pairs[pairs > 0]
+    if pairs.empty:
+        return float('nan')
+
+    return float((same.reindex(pairs.index, fill_value=0) / pairs).mean())
+
+
 def sibling_icc(child_keys, values):
     """Intraclass correlation of a numerical column between siblings."""
     keys = pd.Series(child_keys)
@@ -110,6 +128,9 @@ def subset(data, metadata, root, max_parents, seed=0):
     while queue:
         parent = queue.pop(0)
         primary_key = metadata.tables[parent].primary_key
+        if primary_key is None:
+            continue
+
         keys = set(data[parent][primary_key])
         for relationship in metadata.relationships:
             child = relationship['child_table_name']

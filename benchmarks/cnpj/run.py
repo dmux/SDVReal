@@ -22,6 +22,60 @@ import warnings
 import psutil
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+PARENT_CONTEXT = ['porte_empresa', 'natureza_juridica', 'capital_social']
+CORRELATION_OPTIONS = {
+    'T1': lambda variant: {'lookup_tables': DOMAIN_TABLES} if variant == 'full' else {},
+    'T2': lambda variant: {'model_cardinality': True},
+    'T2S': lambda variant: {
+        'cardinality_by': {
+            child: ['porte_empresa'] for child in ('estabelecimentos', 'socios', 'simples')
+        }
+    },
+    'T3': lambda variant: {
+        'context_columns': {
+            child: {'empresas': PARENT_CONTEXT}
+            for child in ('estabelecimentos', 'socios', 'simples')
+        }
+    },
+    'T4': lambda variant: {
+        'sibling_order': {
+            'estabelecimentos': {'by': 'identificador_matriz_filial', 'ascending': True}
+        }
+    },
+    'T4R': lambda variant: {
+        'group_rules': {
+            'estabelecimentos': {
+                'column': 'identificador_matriz_filial',
+                'first': '1',
+                'others': '2',
+            }
+        }
+    },
+    'T5': lambda variant: {'sibling_correlation': True},
+}
+PLAN_ENCODING = {'categorical_context': 'processed', 'sibling_categorical': 'latent'}
+DOMAIN_TABLES = ['cnaes', 'motivos', 'municipios', 'naturezas', 'paises', 'qualificacoes']
+# (parent column, child table, child column) pairs whose association is compared
+ASSOCIATION_PAIRS = [
+    ('porte_empresa', 'simples', 'opcao_simples'),
+    ('porte_empresa', 'simples', 'opcao_mei'),
+    ('porte_empresa', 'estabelecimentos', 'situacao_cadastral'),
+    ('natureza_juridica', 'estabelecimentos', 'situacao_cadastral'),
+    ('natureza_juridica', 'socios', 'identificador_socio'),
+    ('natureza_juridica', 'socios', 'qualificacao_socio'),
+]
+
+
+def correlation_kwargs(tokens, variant, encoding):
+    """Build the ``IndependentSynthesizer`` arguments for the correlation ``tokens``."""
+    kwargs = {}
+    for token in tokens:
+        kwargs.update(CORRELATION_OPTIONS[token](variant))
+
+    if encoding == 'plan' and tokens:
+        kwargs.update(PLAN_ENCODING)
+
+    return kwargs
 
 
 class _RUsageInfoV4(ctypes.Structure):
@@ -50,6 +104,103 @@ def _children_per_parent(parent_keys, child_keys):
     import pandas as pd
 
     return child_keys.value_counts().reindex(pd.Index(parent_keys), fill_value=0).to_numpy()
+
+
+def _cramers_v(left, right):
+    import numpy as np
+    import pandas as pd
+
+    table = pd.crosstab(pd.Series(left).fillna('NA'), pd.Series(right).fillna('NA')).to_numpy()
+    total = table.sum()
+    if total == 0 or min(table.shape) < 2:
+        return float('nan')
+
+    expected = table.sum(axis=1, keepdims=True) * table.sum(axis=0, keepdims=True) / total
+    chi2 = ((table - expected) ** 2 / expected).sum()
+    return float(np.sqrt(chi2 / total / (min(table.shape) - 1)))
+
+
+def _contingency_similarity(real_pairs, synthetic_pairs):
+
+    real = real_pairs.fillna('NA').value_counts(normalize=True)
+    synthetic = synthetic_pairs.fillna('NA').value_counts(normalize=True)
+    real, synthetic = real.align(synthetic, fill_value=0)
+    return float(1 - (real - synthetic).abs().sum() / 2)
+
+
+def _correlation_metrics(real, synthetic):
+    """Inter-table correlation metrics of section 8 of the correlation plan."""
+    sys.path.insert(0, os.path.join(os.path.dirname(HERE), 'correlation'))
+    import metrics as correlation_metrics
+
+    results = {}
+    joined = {}
+    for name, data in (('real', real), ('synthetic', synthetic)):
+        companies = data['empresas']
+        for child in ('estabelecimentos', 'socios'):
+            counts = _children_per_parent(companies['cnpj_basico'], data[child]['cnpj_basico'])
+            results[f'spearman_capital_n_{child}_{name}'] = correlation_metrics.spearman(
+                companies['capital_social'], counts
+            )
+            results[f'spearman_porte_n_{child}_{name}'] = correlation_metrics.spearman(
+                correlation_metrics.ordinal(companies['porte_empresa']), counts
+            )
+
+        establishments = data['estabelecimentos']
+        for column in ('cnae_fiscal_principal', 'uf', 'municipio', 'situacao_cadastral'):
+            results[f'sibling_same_{column}_{name}'] = correlation_metrics.sibling_same_value(
+                establishments['cnpj_basico'], establishments[column].astype(str)
+            )
+            results[f'sibling_same_per_empresa_{column}_{name}'] = (
+                correlation_metrics.sibling_same_value_per_parent(
+                    establishments['cnpj_basico'], establishments[column].astype(str)
+                )
+            )
+
+        parent_columns = companies[['cnpj_basico', 'porte_empresa', 'natureza_juridica']]
+        joined[name] = {
+            child: data[child].merge(parent_columns, on='cnpj_basico', how='inner')
+            for child in ('estabelecimentos', 'socios', 'simples')
+        }
+
+    real_pairs = set(
+        zip(
+            real['estabelecimentos']['uf'].astype(str),
+            real['estabelecimentos']['municipio'].astype(str),
+        )
+    )
+    synthetic_pairs = list(
+        zip(
+            synthetic['estabelecimentos']['uf'].astype(str),
+            synthetic['estabelecimentos']['municipio'].astype(str),
+        )
+    )
+    results['pct_uf_municipio_consistent_synthetic'] = sum(
+        pair in real_pairs for pair in synthetic_pairs
+    ) / max(len(synthetic_pairs), 1)
+    for parent_column, child, child_column in ASSOCIATION_PAIRS:
+        key = f'{parent_column}~{child}.{child_column}'
+        for name in ('real', 'synthetic'):
+            table = joined[name][child]
+            results[f'cramers_v_{key}_{name}'] = _cramers_v(
+                table[parent_column], table[child_column]
+            )
+
+        results[f'contingency_{key}'] = _contingency_similarity(
+            joined['real'][child][[parent_column, child_column]].astype(str),
+            joined['synthetic'][child][[parent_column, child_column]].astype(str),
+        )
+
+    return {name: round(float(value), 4) for name, value in results.items()}
+
+
+def _sdmetrics_quality(real, synthetic, metadata, max_parents=2000):
+    sys.path.insert(0, os.path.join(os.path.dirname(HERE), 'correlation'))
+    import metrics as correlation_metrics
+
+    return correlation_metrics.quality_report(
+        real, synthetic, metadata, max_parents=max_parents, root='empresas'
+    )
 
 
 def _quality(real, synthetic):
@@ -108,12 +259,19 @@ def worker(config):
         'load', dataset.load, config['sample_dir'], config['fraction'], config['variant']
     )
     rows = {table: len(table_data) for table, table_data in data.items()}
+    kwargs = {}
+    if config['synthesizer'] == 'independent':
+        kwargs = correlation_kwargs(
+            config.get('correlation', []), config['variant'], config.get('encoding', 'improved')
+        )
+
     synthesizer = timed(
         'init',
         synthesizer_class[config['synthesizer']],
         metadata,
         locales=['pt_BR'],
         verbose=False,
+        **kwargs,
     )
     processed = timed('preprocess', synthesizer.preprocess, data)
     timed('fit', synthesizer.fit_processed_data, processed)
@@ -126,6 +284,9 @@ def worker(config):
         integrity = str(error)[:300]
 
     quality = timed('quality', _quality, data, synthetic)
+    quality.update(timed('correlation', _correlation_metrics, data, synthetic))
+    if config.get('sdmetrics'):
+        quality['sdmetrics'] = timed('sdmetrics', _sdmetrics_quality, data, synthetic, metadata)
     print(  # noqa: T201
         'RESULT '
         + json.dumps({
@@ -195,6 +356,22 @@ def main():
     parser.add_argument('--memory-limit-gb', type=float, default=None)
     parser.add_argument('--timeout', type=int, default=3600)
     parser.add_argument('--output', default=None)
+    parser.add_argument(
+        '--correlation',
+        nargs='*',
+        default=[],
+        choices=list(CORRELATION_OPTIONS),
+        help='Inter-table correlation techniques of the IndependentSynthesizer.',
+    )
+    parser.add_argument(
+        '--encoding',
+        choices=['improved', 'plan'],
+        default='improved',
+        help="'plan' uses the encodings of the original plan for categorical context/siblings.",
+    )
+    parser.add_argument('--sdmetrics', action='store_true', help='Run the sdmetrics report.')
+    parser.add_argument('--label', default=None)
+    parser.add_argument('--repeat', type=int, default=1)
     args = parser.parse_args()
 
     sample_dir = os.path.expanduser(args.sample_dir)
@@ -206,19 +383,23 @@ def main():
         f'available {psutil.virtual_memory().available / 2**30:.1f} GB',
         flush=True,
     )
-    for fraction in args.fractions:
+    for fraction in [fraction for fraction in args.fractions for _ in range(args.repeat)]:
         config = {
             'sample_dir': sample_dir,
             'synthesizer': args.synthesizer,
             'variant': args.variant,
             'fraction': fraction,
+            'correlation': args.correlation,
+            'encoding': args.encoding,
+            'sdmetrics': args.sdmetrics,
+            'label': args.label or '+'.join(args.correlation) or 'baseline',
         }
         result = run(config, memory_limit, args.timeout)
         with open(output, 'a') as file:
             file.write(json.dumps(result) + '\n')
 
         print(  # noqa: T201
-            f'{args.synthesizer:11s} {args.variant:4s} {fraction:<7} '
+            f'{config["label"]:16s} {args.synthesizer:11s} {args.variant:4s} {fraction:<7} '
             f'rows={result.get("total_rows", "-"):>10} {result["status"]:<32} '
             f'wall={result["wall_seconds"]}s peak={result["peak_memory_gb"]}GB '
             f'phases={result.get("phases")}',

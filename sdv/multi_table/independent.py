@@ -134,6 +134,15 @@ class IndependentSynthesizer(BaseIndependentSampler, BaseMultiTableSynthesizer):
             copies the value of the first sibling with the probability needed to reach the real
             share of siblings that have the same value as the first one. ``'latent'`` only uses
             the shared random effect of the copula. Defaults to ``'copy'``.
+        cardinality_by (dict or None):
+            ``{child: [parent columns]}``. The real children-per-parent counts are stored per
+            stratum of these columns of the primary parent (categories, and quantile bins of
+            numerical columns) and every synthetic parent receives a count resampled from its
+            own stratum. Unlike ``model_cardinality``, it does not depend on the copula of the
+            parent capturing the relationship. Both can be combined: the copula then orders
+            the counts inside every stratum.
+        cardinality_bins (int):
+            Number of quantile bins of the numerical ``cardinality_by`` columns. Defaults to 10.
     """
 
     def __init__(
@@ -151,6 +160,8 @@ class IndependentSynthesizer(BaseIndependentSampler, BaseMultiTableSynthesizer):
         categorical_context='one_hot',
         max_context_categories=10,
         sibling_categorical='copy',
+        cardinality_by=None,
+        cardinality_bins=10,
     ):
         BaseMultiTableSynthesizer.__init__(self, metadata, locales=locales)
         self._table_sizes = {}
@@ -170,6 +181,10 @@ class IndependentSynthesizer(BaseIndependentSampler, BaseMultiTableSynthesizer):
         self._raw_context_values = defaultdict(dict)
         self._context_categories = defaultdict(dict)
         self._sibling_match_rates = {}
+        self.cardinality_by = cardinality_by or {}
+        self.cardinality_bins = cardinality_bins
+        self._strata_specs = {}
+        self._strata_cardinality = {}
         self._fitted_context_columns = {}
         self._dummy_columns = defaultdict(list)
         self._dummy_stats = {}
@@ -223,6 +238,7 @@ class IndependentSynthesizer(BaseIndependentSampler, BaseMultiTableSynthesizer):
             or self.sibling_order
             or self.group_rules
             or self._get_sibling_correlation_tables()
+            or self.cardinality_by
         )
 
     def _validate_correlation_parameters(self):
@@ -236,7 +252,7 @@ class IndependentSynthesizer(BaseIndependentSampler, BaseMultiTableSynthesizer):
                     f"Lookup table '{table_name}' cannot have parent tables."
                 )
 
-        for argument in ('context_columns', 'sibling_order', 'group_rules'):
+        for argument in ('context_columns', 'sibling_order', 'group_rules', 'cardinality_by'):
             for child_name in getattr(self, argument):
                 if child_name not in self._primary_relationships:
                     raise SynthesizerInputError(
@@ -309,6 +325,7 @@ class IndependentSynthesizer(BaseIndependentSampler, BaseMultiTableSynthesizer):
                         values = data[parent_name][column].to_numpy()
                         self._raw_context_values[child_name][column] = values
 
+        self._fit_cardinality_strata(data)
         self._sibling_match_rates = {}
         if self.sibling_categorical == 'copy':
             for child_name in self._get_sibling_correlation_tables():
@@ -317,6 +334,60 @@ class IndependentSynthesizer(BaseIndependentSampler, BaseMultiTableSynthesizer):
                 )
 
         return processed_data
+
+    def _fit_cardinality_strata(self, data):
+        """Learn the children-per-parent counts of every stratum of ``cardinality_by``."""
+        self._strata_specs = {}
+        self._strata_cardinality = {}
+        for child_name, columns in self.cardinality_by.items():
+            parent_name, foreign_key = self._primary_relationships[child_name]
+            parent_table = data[parent_name]
+            specs = []
+            for column in columns:
+                values = parent_table[column]
+                sdtype = self.metadata.tables[parent_name].columns[column]['sdtype']
+                if sdtype in ('numerical', 'datetime'):
+                    numbers = pd.to_numeric(values, errors='coerce').astype(float)
+                    quantiles = np.linspace(0, 1, self.cardinality_bins + 1)[1:-1]
+                    edges = np.unique(np.nanquantile(numbers, quantiles))
+                    specs.append((column, 'bins', edges))
+                else:
+                    categories = values.value_counts().index[:20]
+                    specs.append((column, 'categories', list(categories)))
+
+            self._strata_specs[child_name] = specs
+            primary_key = self.metadata.tables[parent_name].primary_key
+            parent_keys = parent_table[primary_key] if primary_key else parent_table.index
+            counts = (
+                data[child_name][foreign_key]
+                .value_counts()
+                .reindex(pd.Index(parent_keys), fill_value=0)
+            )
+            strata = self._get_strata(child_name, parent_table)
+            self._strata_cardinality[child_name] = {
+                stratum: np.bincount(stratum_counts.astype(int))
+                for stratum, stratum_counts in pd.Series(counts.to_numpy()).groupby(strata)
+            }
+
+    def _get_strata(self, child_name, parent_table):
+        """Code of the ``cardinality_by`` stratum of every row of ``parent_table``."""
+        codes = np.zeros(len(parent_table), dtype=np.int64)
+        for column, kind, spec in self._strata_specs[child_name]:
+            values = parent_table[column]
+            if kind == 'bins':
+                numbers = pd.to_numeric(values, errors='coerce').astype(float).to_numpy()
+                column_codes = np.where(
+                    np.isnan(numbers), len(spec) + 1, np.searchsorted(spec, numbers, side='right')
+                )
+                size = len(spec) + 2
+            else:
+                column_codes = pd.Categorical(values, categories=spec).codes.astype(np.int64)
+                column_codes[column_codes < 0] = len(spec)
+                size = len(spec) + 1
+
+            codes = codes * size + column_codes
+
+        return codes
 
     def _is_categorical_context(self, parent_name, column):
         sdtype = self.metadata.tables[parent_name].columns[column]['sdtype']
@@ -728,7 +799,9 @@ class IndependentSynthesizer(BaseIndependentSampler, BaseMultiTableSynthesizer):
 
         return order
 
-    def _assign_parents(self, child_name, num_rows, parent_processed, num_parents):
+    def _assign_parents(
+        self, child_name, num_rows, parent_processed, num_parents, parent_table=None
+    ):
         """Choose the parent index of every child before sampling it.
 
         Returns:
@@ -740,7 +813,8 @@ class IndependentSynthesizer(BaseIndependentSampler, BaseMultiTableSynthesizer):
         column = self._get_cardinality_column(child_name, foreign_key)
         is_one_to_one = foreign_key == self.metadata.tables[child_name].primary_key
         has_scores = parent_processed is not None and column in parent_processed.columns
-        if is_one_to_one and not has_scores:
+        has_strata = child_name in self._strata_cardinality and parent_table is not None
+        if is_one_to_one and not has_scores and not has_strata:
             if num_rows > num_parents:
                 warnings.warn(
                     f"Table '{child_name}' has more rows ({num_rows}) than its parent "
@@ -751,13 +825,23 @@ class IndependentSynthesizer(BaseIndependentSampler, BaseMultiTableSynthesizer):
             return np.sort(np.random.choice(num_parents, num_rows, replace=False))
 
         key = self._get_relationship_key(parent_name, child_name, foreign_key)
-        counts = self._resample_counts(self._cardinality[key], num_parents)
-        if has_scores:
-            # rank mapping: the parents with the highest modeled value get the largest counts
-            scores = parent_processed[column].to_numpy()
-            ranked = np.empty_like(counts)
-            ranked[np.argsort(scores, kind='stable')] = np.sort(counts)
-            counts = ranked
+        scores = parent_processed[column].to_numpy() if has_scores else None
+        if has_strata:
+            counts = np.zeros(num_parents, dtype=int)
+            strata = self._get_strata(child_name, parent_table)
+            for stratum, indices in pd.Series(np.arange(num_parents)).groupby(strata):
+                indices = indices.to_numpy()
+                cardinality = self._strata_cardinality[child_name].get(
+                    stratum, self._cardinality[key]
+                )
+                counts[indices] = self._rank_counts(
+                    self._resample_counts(cardinality, len(indices)),
+                    None if scores is None else scores[indices],
+                )
+        else:
+            counts = self._rank_counts(
+                self._resample_counts(self._cardinality[key], num_parents), scores
+            )
 
         assignment = np.repeat(np.arange(num_parents), counts)
         if is_one_to_one:
@@ -770,6 +854,16 @@ class IndependentSynthesizer(BaseIndependentSampler, BaseMultiTableSynthesizer):
             num_nulls = round(len(assignment) * null_rate / (1 - null_rate))
 
         return np.concatenate([assignment, np.full(num_nulls, -1)])
+
+    @staticmethod
+    def _rank_counts(counts, scores):
+        """Rank mapping: the parents with the highest modeled score get the largest counts."""
+        if scores is None:
+            return counts
+
+        ranked = np.empty_like(counts)
+        ranked[np.argsort(scores, kind='stable')] = np.sort(counts)
+        return ranked
 
     def _sample_processed_rows(self, table_name, num_rows, context=None, groups=None):
         """Sample ``num_rows`` rows, returning them in the processed and in the final space."""
@@ -871,7 +965,7 @@ class IndependentSynthesizer(BaseIndependentSampler, BaseMultiTableSynthesizer):
             parent_name, foreign_key = self._primary_relationships[table_name]
             parent_table = sampled_data[parent_name]
             assignment = self._assign_parents(
-                table_name, num_rows, processed.get(parent_name), len(parent_table)
+                table_name, num_rows, processed.get(parent_name), len(parent_table), parent_table
             )
             context = self._build_context(
                 table_name, assignment, processed.get(parent_name), parent_table
