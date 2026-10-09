@@ -27,3 +27,6 @@ scale:best       independent core 0.025   rows=   5564594 ok                    
 scale:T2..T5(mem-opt) independent core 0.01    rows=   2232420 ok                               wall=286.4s peak=4.4GB phases={'load': 2.99, 'init': 1.33, 'preprocess': 44.27, 'fit': 143.09, 'sample': 65.98, 'validate': 6.56, 'quality': 1.47, 'correlation': 17.63, 'sdmetrics': 0.52}
 scale:T2..T5(mem-opt) independent core 0.025   rows=   5564594 ok                               wall=698.1s peak=9.29GB phases={'load': 8.07, 'init': 1.36, 'preprocess': 114.35, 'fit': 325.59, 'sample': 167.22, 'validate': 15.34, 'quality': 5.03, 'correlation': 56.99, 'sdmetrics': 0.85}
 == done E
+tiny:best        independent core 0.0001  rows=     30065 ok                               wall=12.5s peak=1.02GB phases
+tiny:best        independent core 0.0001  rows=     30065 ok                               wall=12.2s peak=1.04GB phases
+tiny:best        independent core 0.0001  rows=     30065 ok                               wall=12.5s peak=1.04GB phases

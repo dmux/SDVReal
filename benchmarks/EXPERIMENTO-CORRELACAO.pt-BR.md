@@ -10,7 +10,7 @@
 |---|---|
 | O plano funciona? | **Em parte.** T2, T4 com regras e T5 numérica funcionam como previsto. Mas a T3 com contexto categórico e a T5 com colunas categóricas, **do jeito que o plano descreve**, quase não recuperam nada no CNPJ. A meta de UF↔município (≥ 99%) **não é alcançável com a T1**. |
 | Houve melhorias reais? | **Sim, quatro**, todas medidas: contexto categórico em one-hot com regressão exata (I1), cópia categórica entre irmãos calibrada por pai (I2), cardinalidade estratificada (I3, `cardinality_by`) e `FixedCombinations` integrada à cópia entre irmãos (I4). |
-| Ficou melhor que o HMA? | **Sim, no CNPJ a 0,01%.** Ganha em todas as métricas entre tabelas medidas e é **37× mais rápido** (11 s contra 419 s). |
+| Ficou melhor que o HMA? | **Em custo e cardinalidade, claramente; em qualidade, na maioria das métricas.** No CNPJ a 0,01%, a configuração recomendada é **34× mais rápida** (12 s contra 419 s), preserva a cauda da cardinalidade e vence o HMA em 4 de 7 associações entre tabelas (3 delas ≈ real), perdendo em 2 e empatando em 1 (seção 7). |
 | Custo | Configuração recomendada: **+2% de tempo em 2,5% (5,6 M de linhas)** e +4% em 0,1%. A memória fica dentro do limite até 1% (+14% a +19%) e passa dele em 2,5% (+23%). Esse é o único gate reprovado e fica como item aberto (seção 8). |
 | Compatibilidade | Tudo desligado por padrão. Com as opções desligadas, a saída é **idêntica bit a bit** à da branch atual (hash SHA-256 das tabelas sintéticas, `PYTHONHASHSEED=0`). |
 
@@ -175,22 +175,41 @@ Desvio padrão de tempo em 3 repetições: ≤ 0,45 s.
 
 ## 7. Comparação com o HMA (0,01%, 30 mil linhas)
 
-| Métrica | Real | Independent baseline | **Independent T2..T5** | HMA |
-|---|---|---|---|---|
-| Tempo total | — | 13,2 s | **11,4 s** | 419,4 s (37×) |
-| KS filiais/empresa · sócios/empresa | 0 | 0 · 0 | **0 · 0** | 0,028 · 0,141 |
-| Máximo de filiais por empresa | 7.903 | 7.903 | **7.903** | 211 |
-| 1 matriz por empresa | 100% | 45,9% | **100%** | 81,1% |
-| Spearman porte~nº sócios | 0,143 | −0,001 | 0,074 | 0,086 |
-| V porte~MEI | 0,152 | 0,013 | **0,101** | 0,038 |
-| V natureza~situação (estab.) | 0,261 | 0,034 | 0,100 | 0,101 |
-| V natureza~qualif. sócio | 0,616 | 0,070 | **0,279** | 0,081 |
-| Mesmo CNAE entre filiais (pares) | 0,694 | 0,184 | **0,618** | 0,497 |
-| sdmetrics Intertable Trends | — | 0,622 | **0,676** | 0,605 |
-| sdmetrics Column Pair Trends | — | 0,573 | **0,609** | 0,550 |
-| Pico de memória | — | 1,01 GB | 1,03 GB | 1,27 GB |
+O HMA, o baseline e T2..T5 têm 1 execução cada. A configuração recomendada (FC+T2S+T3C+T4+T4R+T5, código final) tem 3, com métricas de qualidade idênticas porque a seed é fixa.
 
-Na escala em que o HMA ainda roda, o `IndependentSynthesizer` com as opções de correlação **supera o HMA em todas as métricas entre tabelas** e preserva a cauda exata da cardinalidade, que o HMA perde (211 contra 7.903). O sampling ficou mais rápido que o baseline (1,1 s contra 2,5 s): o caminho condicional gera cada tabela de uma vez, sem o laço de lotes.
+| Métrica | Real | Independent baseline | Independent T2..T5 | **Independent recomendado** | HMA |
+|---|---|---|---|---|---|
+| Tempo total | — | 13,2 s | 11,4 s | **12,4 s** | 419,4 s (34× o recomendado) |
+| Pico de memória | — | 1,01 GB | 1,03 GB | 1,03 GB | 1,27 GB |
+| KS filiais/empresa · sócios/empresa | 0 | 0 · 0 | 0 · 0 | 0 · 0,002 | 0,028 · 0,141 |
+| Máximo de filiais por empresa | 7.903 | 7.903 | 7.903 | 7.903 | 211 |
+| 1 matriz por empresa | 100% | 45,9% | 100% | 100% | 81,1% |
+| Par (UF, município) válido | 100% | 11,0% | 11,7% | **100%** | 12,1% |
+| Spearman porte~nº sócios | 0,143 | −0,001 | 0,074 | **0,146** | 0,086 |
+| Spearman capital~nº sócios | 0,284 | 0,005 | **0,056** | −0,041 | 0,045 |
+| V porte~MEI | 0,152 | 0,013 | **0,101** | 0,037 | 0,038 |
+| V porte~situação (estab.) | 0,183 | 0,011 | 0,061 | **0,196** | 0,066 |
+| V natureza~situação (estab.) | 0,261 | 0,034 | 0,100 | **0,264** | 0,101 |
+| V natureza~identificador sócio | 0,109 | 0,067 | 0,049 | 0,047 | **0,102** |
+| V natureza~qualif. sócio | 0,616 | 0,070 | **0,279** | 0,277 | 0,081 |
+| Mesmo CNAE entre filiais (pares) | 0,694 | 0,184 | **0,618** | 0,392 | 0,497 |
+| Mesmo CNAE entre filiais (média por empresa) | 0,676 | — | — | 0,563 | — |
+| sdmetrics Column Shapes | — | 0,743 | 0,746 | **0,754** | 0,664 |
+| sdmetrics Column Pair Trends | — | 0,573 | **0,609** | 0,606 | 0,550 |
+| sdmetrics Intertable Trends | — | 0,622 | **0,676** | 0,662 | 0,605 |
+
+Na escala em que o HMA ainda roda, a configuração recomendada:
+- **supera o HMA em 4 de 7 associações**, três delas praticamente iguais ao real: natureza~situação 0,264 contra 0,261; porte~situação 0,196 contra 0,183; porte~nº de sócios 0,146 contra 0,143;
+- **perde em 2**: natureza~identificador do sócio e capital~nº de sócios;
+- **empata em 1**: porte~MEI;
+- vence nos 3 agregados do sdmetrics e mantém a cauda exata da cardinalidade (7.903 contra 211);
+- leva o par (UF, município) a 100%.
+
+As configurações T2..T5 e recomendada se complementam:
+- **T2..T5** acerta melhor porte~MEI (associação dentro dos registros do Simples) e o CNAE entre filiais medido por pares. A métrica por pares é dominada pela empresa com 7.903 filiais (52% dos estabelecimentos nesta escala).
+- **Recomendada** acerta as associações com a situação do estabelecimento. A cópia entre filiais é calibrada por empresa, o que favorece a métrica por empresa, e não a métrica por pares.
+
+O HMA tem 1 execução nos parâmetros padrão, e a comparação vale só para esta escala (§7 de [`REVISAO.md`](REVISAO.md)).
 
 ---
 
@@ -204,7 +223,7 @@ Na escala em que o HMA ainda roda, o `IndependentSynthesizer` com as opções de
 
 | Gate (seção 8.2 do plano) | Resultado |
 |---|---|
-| Integridade referencial = 100% | ✅ em todas as 81 execuções do CNPJ e 39 do dado sintético |
+| Integridade referencial = 100% | ✅ em todas as 84 execuções do CNPJ e 39 do dado sintético |
 | KS filhos por pai ≤ 0,005 | ✅ 0,000 a 0,001 (a T2S reamostra por estrato, então não é exatamente 0) |
 | Column Shapes / Column Pair Trends ≥ baseline − 2 p.p. | ✅ recomendado (−0,7 p.p.) · ❌ T3 com `capital_social` (−3,4 p.p.) |
 | Tempo ≤ +20% | ✅ recomendado +0,2% a +4%; T2..T5 +10% a +14% |

@@ -8,42 +8,51 @@
 
 ## Comparativo em resumo: novo `IndependentSynthesizer` × HMA padrão do SDV
 
-**Em uma frase:** o novo `IndependentSynthesizer` (v2) roda em escalas e schemas que o HMA não suporta, é dezenas de vezes mais rápido e preserva a cardinalidade exata. Na qualidade das dependências entre tabelas, ele **empata com o HMA ou o supera**, mas **não o supera de forma conclusiva**, e precisa de configuração com conhecimento do domínio.
+**Em uma frase:** o novo `IndependentSynthesizer` (v2) roda em escalas e schemas que o HMA não suporta, é ~34× mais rápido e preserva a cardinalidade exata. Na configuração recomendada, ele **supera o HMA em 4 de 7 dependências entre tabelas** e reproduz três delas quase exatamente. Ele **perde em 2** (uma delas é a semelhança de CNAE entre filiais, medida por pares) e empata em 1. Além disso, precisa de configuração com conhecimento do domínio.
 
 ### Números lado a lado (CNPJ, schema `core` de 4 tabelas, 0,01% = 30 mil linhas, a única escala em que o HMA termina)
 
-| Critério | Real | HMA padrão | v1 (sem correlação) | **v2 (nova)** | v2 × HMA |
-|---|---|---|---|---|---|
-| **Custo** | | | | | |
-| Tempo total | — | 419 s (833 s em outra execução) | 13,2 s | **11,4 s** | ✅ **37× mais rápido** |
-| Tempo de sampling | — | 389 s | 2,5 s | **1,1 s** | ✅ ~350× |
-| Pico de memória | — | 1,27 GB | 1,01 GB | **1,03 GB** | ✅ −19% |
-| **Escala e schema** | | | | | |
-| Maior amostra concluída | — | 30 mil linhas (119 mil: timeout de 30 min) | 5,6 M | **5,6 M (632 s)** | ✅ ~185× mais linhas |
-| Schema com 10 tabelas / profundidade 3 | — | ❌ recusado | ✅ | ✅ | ✅ |
-| **Cardinalidade** | | | | | |
-| KS estabelecimentos/empresa · sócios/empresa | 0 · 0 | 0,028 · 0,141 | 0 · 0 | **0 · 0** | ✅ |
-| Máx. estabelecimentos por empresa | 7.903 | 211 | 7.903 | **7.903** | ✅ cauda preservada |
-| **Regras e integridade** | | | | | |
-| Exatamente 1 matriz por empresa | 100% | 81,1% | 45,9% | **100%**¹ | ✅ (por regra declarada) |
-| Integridade referencial | 100% | ✅ | ✅ | ✅ | = |
-| **Dependências pai → filho** (Cramér's V; quanto mais perto do real, melhor) | | | | | |
-| Porte ~ opção MEI | 0,152 | 0,038 | 0,013 | **0,101** | ✅ |
-| Natureza ~ qualificação do sócio | 0,616 | 0,081 | 0,070 | **0,279** | ✅ |
-| Natureza ~ situação do estabelecimento | 0,261 | 0,101 | 0,034 | 0,100 | = |
-| Porte ~ situação do estabelecimento | 0,183 | **0,066** | 0,011 | 0,061 | ≈ (levemente pior) |
-| Natureza ~ identificador do sócio | 0,109 | **0,102** | 0,067 | 0,049 | ❌ |
-| Spearman(porte, nº de sócios) | 0,143 | **0,086** | −0,001 | 0,074 | ❌ (levemente pior) |
-| **Semelhança entre filiais da mesma empresa** | | | | | |
-| Mesmo CNAE (pares) | 0,694 | 0,497 | 0,184 | **0,618** | ✅ |
-| **Agregados do sdmetrics** | | | | | |
-| Column Shapes | — | 0,664 | 0,743 | **0,746** | ✅ |
-| Column Pair Trends | — | 0,550 | 0,573 | **0,609** | ✅ |
-| Intertable Trends | — | 0,605 | 0,622 | **0,676** | ✅ |
+| Critério | Real | HMA padrão | v1 (sem correlação) | v2 (T2..T5) | **v2 recomendada** | Recomendada × HMA |
+|---|---|---|---|---|---|---|
+| **Custo** | | | | | | |
+| Tempo total | — | 419 s (833 s em outra execução) | 13,2 s | 11,4 s | **12,4 s** | ✅ **34× mais rápido** |
+| Tempo de sampling | — | 389 s | 2,5 s | 1,1 s | 2,5 s | ✅ ~160× |
+| Pico de memória | — | 1,27 GB | 1,01 GB | 1,03 GB | **1,03 GB** | ✅ −19% |
+| **Escala e schema** | | | | | | |
+| Maior amostra concluída | — | 30 mil linhas (119 mil: timeout de 30 min) | 5,6 M | 5,6 M | **5,6 M (632 s)** | ✅ ~185× mais linhas |
+| Schema com 10 tabelas / profundidade 3 | — | ❌ recusado | ✅ | ✅ | ✅ | ✅ |
+| **Cardinalidade** | | | | | | |
+| KS estabelecimentos/empresa · sócios/empresa | 0 · 0 | 0,028 · 0,141 | 0 · 0 | 0 · 0 | **0 · 0,002** | ✅ |
+| Máx. estabelecimentos por empresa | 7.903 | 211 | 7.903 | 7.903 | **7.903** | ✅ cauda preservada |
+| **Regras, domínio e integridade** | | | | | | |
+| Exatamente 1 matriz por empresa | 100% | 81,1% | 45,9% | 100%¹ | **100%**¹ | ✅ (por regra declarada) |
+| Par (UF, município) válido | 100% | 12,1% | 11,0% | 11,7% | **100%**² | ✅ (por constraint) |
+| Integridade referencial | 100% | ✅ | ✅ | ✅ | ✅ | = |
+| **Dependências pai → filho** (quanto mais perto do real, melhor) | | | | | | |
+| Spearman(porte, nº de sócios) | 0,143 | 0,086 | −0,001 | 0,074 | **0,146** | ✅ ≈ real |
+| Cramér's V natureza ~ situação do estabelecimento | 0,261 | 0,101 | 0,034 | 0,100 | **0,264** | ✅ ≈ real |
+| Cramér's V porte ~ situação do estabelecimento | 0,183 | 0,066 | 0,011 | 0,061 | **0,196** | ✅ ≈ real |
+| Cramér's V natureza ~ qualificação do sócio | 0,616 | 0,081 | 0,070 | 0,279 | **0,277** | ✅ |
+| Cramér's V porte ~ opção MEI | 0,152 | 0,038 | 0,013 | 0,101 | 0,037 | = (ambos longe do real)³ |
+| Cramér's V natureza ~ identificador do sócio | 0,109 | **0,102** | 0,067 | 0,049 | 0,047 | ❌ |
+| Spearman(capital, nº de sócios) | 0,284 | **0,045** | 0,005 | 0,056 | −0,041 | ❌ (todos longe do real) |
+| **Semelhança entre filiais da mesma empresa** | | | | | | |
+| Mesmo CNAE, por pares (dominado pela empresa com 7.903 filiais) | 0,694 | **0,497** | 0,184 | 0,618 | 0,392 | ❌⁴ |
+| Mesmo CNAE, média por empresa | 0,676 | não medido | — | — | 0,563 | — |
+| Mesma UF, média por empresa | 0,868 | não medido | — | — | 0,831 | — |
+| **Agregados do sdmetrics** | | | | | | |
+| Column Shapes | — | 0,664 | 0,743 | 0,746 | **0,754** | ✅ |
+| Column Pair Trends | — | 0,550 | 0,573 | 0,609 | **0,606** | ✅ |
+| Intertable Trends | — | 0,605 | 0,622 | 0,676 | **0,662** | ✅ |
 
-Fonte: §5.1, 1 execução por método. A coluna v2 usa a configuração T2+T3+T4+T4R+T5 (§4.2). A configuração recomendada (FC+T2S+T3C+T4+T4R+T5) **não foi rodada nessa escala**; em 230 mil linhas ela é comparada só com a v1 (§5.2).
+Fonte: §5.1. O HMA, a v1 e a v2 (T2..T5) têm 1 execução cada; a v2 recomendada tem 3, com métricas de qualidade idênticas porque a seed é fixa.
+- **v2 (T2..T5):** cardinalidade pela cópula, contexto com `capital_social`, calibração antiga da cópia entre filiais.
+- **v2 recomendada:** FC+T2S+T3C+T4+T4R+T5 (§4.2).
 
 ¹ Garantido pela regra `group_rules` ("1ª filial = matriz"), declarada pelo usuário, e não aprendido pelo modelo.
+² Garantido pela constraint `FixedCombinations(['uf', 'municipio'])` do próprio SDV, que o HMA também poderia usar. A contribuição da v2 é manter o par válido mesmo com a cópia entre filiais.
+³ Com a estratificação por porte, a associação porte × Simples passa a aparecer em **quais** empresas têm registro no Simples: a taxa por porte bate exatamente com a real (0,91 / 0,76 / 0,04). Sobra pouca associação *dentro* dos registros existentes.
+⁴ A cópia entre filiais é calibrada **por empresa**, com cada empresa pesando igual. Na métrica por pares, a empresa com 7.903 filiais (52% dos estabelecimentos nesta escala) pesa quase tudo. Por empresa, a v2 dá 0,563 contra 0,676 real; o HMA não foi medido assim.
 
 ### Benefícios da nova implementação
 
@@ -51,9 +60,13 @@ Fonte: §5.1, 1 execução por método. A coluna v2 usa a configuração T2+T3+T
 1. **Escala:** custo linear e vetorizado, com 1 modelo por tabela em vez de 1 por linha do pai. Roda 5,6 M de linhas em ~10 min; o HMA não termina 119 mil linhas em 30 min.
 2. **Schemas maiores:** sem a trava de 5 tabelas e profundidade 2, e sem a explosão de colunas de parâmetros.
 3. **Cardinalidade exata**, inclusive a cauda (a empresa com 7.903 estabelecimentos). O HMA chega a no máximo 211.
-4. **Dependências entre tabelas no mesmo nível ou acima do HMA** em 4 das 7 métricas direcionadas e nos 3 agregados do sdmetrics, com destaque para porte × MEI, natureza × qualificação do sócio e CNAE entre filiais.
-5. **Regras de grupo exatas** (1 matriz por empresa) e **pares válidos** (UF, município) via `FixedCombinations` integrada à cópia entre filiais.
-6. **Reprodutível:** mesma seed, mesmo resultado em qualquer processo. Nem o HMA nem a v1 garantem isso.
+4. **Dependências entre tabelas melhores que as do HMA em 4 de 7**, e três delas praticamente iguais ao real:
+   - natureza × situação: 0,264 contra 0,261 real (HMA 0,101);
+   - porte × situação: 0,196 contra 0,183 (HMA 0,066);
+   - porte × nº de sócios: 0,146 contra 0,143 (HMA 0,086).
+5. **Melhor também nos três agregados do sdmetrics:** Column Shapes, Column Pair Trends e Intertable Trends.
+6. **Regras de grupo exatas** (1 matriz por empresa) e **pares válidos** (UF, município), mesmo com a cópia entre filiais.
+7. **Reprodutível:** mesma seed, mesmo resultado em qualquer processo. Nem o HMA nem a v1 garantem isso.
 
 **Em relação à v1:**
 1. Recupera dependências que a v1 ignora por construção. Em 230 mil linhas (§5.2):
@@ -69,27 +82,30 @@ Fonte: §5.1, 1 execução por método. A coluna v2 usa a configuração T2+T3+T
 
 **Em relação ao HMA:**
 1. **Exige conhecimento do domínio.** É preciso escolher as colunas de contexto, os estratos de cardinalidade e as regras de grupo. O HMA não pede nenhuma configuração.
-2. **Fica atrás do HMA em 3 das 7 associações** medidas: natureza × identificador do sócio (0,049 contra 0,102), Spearman(porte, nº de sócios) (0,074 contra 0,086) e porte × situação (0,061 contra 0,066).
-3. **Condiciona só no pai direto e primário.** O HMA propaga parâmetros dos netos para o avô; a v2 não modela agregados dos filhos no pai.
-4. **Só funciona com cópula gaussiana** no filho. O condicionamento é linear no espaço latente; relações não monotônicas entre numéricas ficam aproximadas.
-5. A "1 matriz por empresa" de 100% **vem de uma regra**, não de aprendizado. Sem a regra, só com a posição da filial, ela fica em 95%, ainda acima dos 81% do HMA.
+2. **Fica atrás do HMA em 2 das 7 associações:**
+   - natureza × identificador do sócio: 0,047 contra 0,102 (real 0,109);
+   - capital × nº de sócios: −0,041 contra 0,045 (real 0,284; os dois longe).
+3. **Fica atrás na semelhança de CNAE entre filiais medida por pares** (0,392 contra 0,497). Essa métrica é dominada por uma única empresa.
+4. **Condiciona só no pai direto e primário.** O HMA propaga parâmetros dos netos para o avô; a v2 não modela agregados dos filhos no pai.
+5. **Só funciona com cópula gaussiana** no filho. O condicionamento é linear no espaço latente; relações não monotônicas entre numéricas ficam aproximadas.
+6. A "1 matriz por empresa" de 100% **vem de uma regra**, não de aprendizado. Sem a regra, só com a posição da filial, ela fica em 95% (em 230 mil linhas), ainda acima dos 81% do HMA.
 
 **Em relação à v1** (medidas em 230 mil a 5,6 M linhas):
 1. **Memória:** +6% a +23%. Passa da meta de +15% a partir de 2,2 M de linhas.
 2. **Efeitos colaterais da configuração recomendada:**
-   - Spearman(capital, nº de sócios) fica em −0,06 (real 0,29), porque a cardinalidade é estratificada só por porte;
-   - filiais ficam parecidas demais no município (0,84 contra 0,53), porque o município é copiado junto com a UF para manter o par válido.
-3. **Contexto com colunas mal modeladas no pai degrada o filho:** usar `capital_social` como contexto derruba o Column Pair Trends em 3,4 p.p.
-4. **Cardinalidade quase exata, não exata,** com a estratificação: KS de 0 para 0,001.
+   - capital × nº de sócios fica negativo (real 0,28 a 0,29), porque a cardinalidade é estratificada só por porte;
+   - filiais ficam parecidas demais no município (0,82 a 0,84 contra 0,53 a 0,55), porque o município é copiado junto com a UF para manter o par válido.
+3. **Contexto com colunas mal modeladas no pai degrada o filho:** usar `capital_social` como contexto derruba o Column Pair Trends em 3,4 p.p. Por isso a configuração recomendada não o usa.
+4. **Cardinalidade quase exata, não exata,** com a estratificação: KS de 0 para até 0,002.
 5. Restrições com rejeição (reject sampling) **não são suportadas** no caminho condicional.
 
 ### O que ainda não está provado
 
-Há uma única execução de comparação com o HMA, em uma única escala pequena dominada por uma empresa gigante, com o HMA nos parâmetros padrão. Não há conjunto de teste separado nem variância amostral no CNPJ, e não foram avaliadas utilidade para ML nem privacidade. Detalhes nas §7 e §8.
+O HMA tem uma única execução de qualidade, em uma única escala pequena dominada por uma empresa gigante, e nos parâmetros padrão. Não há conjunto de teste separado nem variância amostral no CNPJ, e não foram avaliadas utilidade para ML nem privacidade. Detalhes nas §7 e §8.
 
 Classificação da evidência:
 - **Forte:** custo, escala e cardinalidade.
-- **Fraca a moderada:** qualidade superior ao HMA.
+- **Moderada:** dependências entre tabelas superiores às do HMA.
 
 ---
 
@@ -450,30 +466,34 @@ Variantes do schema CNPJ:
 
 ### 5.1 Três vias: HMA × v1 × v2, CNPJ `core`, 0,01% (30 mil linhas)
 
-Esta é a única escala em que o HMA roda (1 execução cada). A coluna v2 usa T2 + T3 + T4 + T4R + T5, melhorada, com a calibração anterior à I2/I4.
+Esta é a única escala em que o HMA roda. O HMA, a v1 e a v2 (T2..T5) têm 1 execução cada; a v2 recomendada (FC+T2S+T3C+T4+T4R+T5, código final) tem 3, com métricas idênticas porque a seed é fixa. A v2 (T2..T5) usa a calibração da cópia anterior à I2/I4.
 
-| Métrica | Real | HMA | v1 | v2 |
-|---|---|---|---|---|
-| Tempo total | — | 419 s¹ | 13,2 s | **11,4 s** |
-| Pico de memória | — | 1,27 GB | 1,01 GB | 1,03 GB |
-| Integridade | — | ✅ | ✅ | ✅ |
-| KS estabelecimentos / empresa | 0 | 0,028 | **0,000** | **0,000** |
-| KS sócios / empresa | 0 | 0,141 | **0,000** | **0,000** |
-| Máximo de estabelecimentos por empresa | 7.903 | 211 | **7.903** | **7.903** |
-| 1 matriz por empresa | 100% | 81,1% | 45,9% | **100%**² |
-| Spearman(porte, nº de sócios) | 0,143 | **0,086** | −0,001 | 0,074 |
-| V porte ~ `simples.opcao_mei` | 0,152 | 0,038 | 0,013 | **0,101** |
-| V porte ~ `estab.situacao_cadastral` | 0,183 | **0,066** | 0,011 | 0,061 |
-| V natureza ~ `estab.situacao_cadastral` | 0,261 | **0,101** | 0,034 | 0,100 |
-| V natureza ~ `socios.identificador_socio` | 0,109 | **0,102** | 0,067 | 0,049 |
-| V natureza ~ `socios.qualificacao_socio` | 0,616 | 0,081 | 0,070 | **0,279** |
-| Mesmo CNAE entre filiais (pares) | 0,694 | 0,497 | 0,184 | **0,618** |
-| sdmetrics Column Shapes | — | 0,664 | 0,743 | **0,746** |
-| sdmetrics Column Pair Trends | — | 0,550 | 0,573 | **0,609** |
-| sdmetrics Intertable Trends | — | 0,605 | 0,622 | **0,676** |
+| Métrica | Real | HMA | v1 | v2 (T2..T5) | v2 recomendada |
+|---|---|---|---|---|---|
+| Tempo total | — | 419 s¹ | 13,2 s | 11,4 s | 12,4 s |
+| Pico de memória | — | 1,27 GB | 1,01 GB | 1,03 GB | 1,03 GB |
+| Integridade | — | ✅ | ✅ | ✅ | ✅ |
+| KS estabelecimentos / empresa | 0 | 0,028 | 0,000 | 0,000 | 0,000 |
+| KS sócios / empresa | 0 | 0,141 | 0,000 | 0,000 | 0,002 |
+| Máximo de estabelecimentos por empresa | 7.903 | 211 | 7.903 | 7.903 | 7.903 |
+| 1 matriz por empresa | 100% | 81,1% | 45,9% | 100%² | 100%² |
+| Par (UF, município) válido | 100% | 12,1% | 11,0% | 11,7% | 100%³ |
+| Spearman(porte, nº de sócios) | 0,143 | 0,086 | −0,001 | 0,074 | **0,146** |
+| Spearman(capital, nº de sócios) | 0,284 | 0,045 | 0,005 | 0,056 | −0,041 |
+| V porte ~ `simples.opcao_mei` | 0,152 | 0,038 | 0,013 | **0,101** | 0,037 |
+| V porte ~ `estab.situacao_cadastral` | 0,183 | 0,066 | 0,011 | 0,061 | **0,196** |
+| V natureza ~ `estab.situacao_cadastral` | 0,261 | 0,101 | 0,034 | 0,100 | **0,264** |
+| V natureza ~ `socios.identificador_socio` | 0,109 | **0,102** | 0,067 | 0,049 | 0,047 |
+| V natureza ~ `socios.qualificacao_socio` | 0,616 | 0,081 | 0,070 | **0,279** | 0,277 |
+| Mesmo CNAE entre filiais (pares) | 0,694 | 0,497 | 0,184 | **0,618** | 0,392 |
+| Mesmo CNAE entre filiais (média por empresa) | 0,676 | — | — | — | 0,563 |
+| sdmetrics Column Shapes | — | 0,664 | 0,743 | 0,746 | **0,754** |
+| sdmetrics Column Pair Trends | — | 0,550 | 0,573 | **0,609** | 0,606 |
+| sdmetrics Intertable Trends | — | 0,605 | 0,622 | **0,676** | 0,662 |
 
 ¹ Em uma execução anterior com os mesmos dados, o HMA levou 833 s (fit 42,7 s, sample 776 s) e chegou a 79,5% em "1 matriz" e 127 de máximo. A variação de tempo e de resultado entre execuções do HMA não foi investigada.
 ² Por regra declarada (`group_rules`), e não por modelagem.
+³ Por constraint (`FixedCombinations`), disponível também para o HMA.
 
 ### 5.2 v1 × v2, CNPJ `core`, 0,1% (230 mil linhas, 3 repetições)
 
@@ -538,7 +558,7 @@ Afirmações que os autores **sustentam**, e as que **não sustentam**:
 | A v1 escala e o HMA não | **Forte** | 52× (execução anterior) ou 37× (esta) mais rápida a 30 mil linhas; o HMA estoura o timeout a 119 mil; a v1 é linear até 5,6 M |
 | A v1 não captura L4 a L7 | **Forte** | Por construção; medido ≈ 0 |
 | A v2 recupera parte de L4 a L7 sem perder L3 nem a escala | **Moderada a forte** | Ganhos consistentes nas métricas direcionadas; custo de +0,2% a +4% de tempo |
-| A v2 é **melhor que o HMA** em dependências entre tabelas | **Fraca a moderada** | Uma execução, na única escala em que o HMA roda (30 mil linhas, dominada por uma empresa gigante), com o HMA nos parâmetros padrão. Nas 7 associações, a v2 vence em 3 (MEI, qualificação do sócio, CNAE entre irmãos), perde em 3 (Spearman porte~sócios, porte~situação, natureza~identificador) e empata em 1. Nos agregados do sdmetrics, a vantagem é modesta |
+| A v2 é **melhor que o HMA** em dependências entre tabelas | **Moderada** | Na configuração recomendada, das 7 associações a v2 vence em 4 (três praticamente iguais ao real: natureza~situação, porte~situação, porte~nº de sócios; além de natureza~qualificação do sócio), perde em 2 (natureza~identificador, capital~nº de sócios) e empata em 1 (porte~MEI). Vence nos 3 agregados do sdmetrics e perde no CNAE entre filiais medido por pares. Ressalvas: o HMA tem 1 execução, nos parâmetros padrão, em uma escala de 30 mil linhas dominada por uma empresa gigante |
 | A v2 reproduz a **magnitude** das associações pai → filho | **Fraca** | Recupera de 1/3 a 2/3 do Cramér's V real (por exemplo, 0,08 contra 0,13 e 0,13 contra 0,50). O **padrão** da associação não foi verificado |
 | A v2 reproduz a semelhança entre irmãos | **Moderada, com ressalva de circularidade** | A métrica é próxima da grandeza calibrada (§7.2) |
 | As regras de grupo e de domínio ficam 100% | **Trivial** | É uma propriedade da regra ou constraint declarada, não um mérito do modelo |
@@ -667,7 +687,7 @@ Para cada item, marque **Concordo / Concordo parcialmente / Discordo** e justifi
 | Gerador com correlação conhecida | `tests/utils.py::generate_correlated_parent_child` |
 | Benchmark CNPJ | `benchmarks/cnpj/` (README com as opções) |
 | Experimento e campanhas | `benchmarks/correlation/` (`synthetic.py`, `metrics.py`, `summarize.py`, `run_cnpj_campaign*.sh`) |
-| Resultados brutos (1 linha JSON por execução) | `benchmarks/correlation/results_cnpj.jsonl` (81 execuções), `results_synthetic.jsonl` (39) |
+| Resultados brutos (1 linha JSON por execução) | `benchmarks/correlation/results_cnpj.jsonl` (84 execuções), `results_synthetic.jsonl` (39) |
 | Logs | `benchmarks/correlation/*.log` |
 | Relatórios detalhados | `BENCHMARK.pt-BR.md`, `EXPERIMENTO-CORRELACAO.pt-BR.md` |
 
