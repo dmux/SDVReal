@@ -11,8 +11,8 @@ from tqdm import tqdm
 from sdv.errors import SynthesizerInputError
 from sdv.multi_table._conditional import ConditionalCopulaSampler
 from sdv.multi_table._group_features import (
+    IntraclassAccumulator,
     apply_group_rule,
-    intraclass_correlation,
     positions_from_assignment,
     sibling_positions,
 )
@@ -680,14 +680,27 @@ class IndependentSynthesizer(BaseIndependentSampler, BaseMultiTableSynthesizer):
                 sampler = self._get_conditional_sampler(
                     table_name, synthesizer._model, self._get_context_columns(table_name)
                 )
-                residuals = sampler.residuals(table_data)
-                rho = intraclass_correlation(residuals, self._fit_parent_indices[table_name])
-                rho = pd.Series(rho, index=sampler.own_columns)
-                copied = list(self._sibling_match_rates.get(table_name, {}))
-                rho[rho.index.isin(copied)] = 0.0
-                self._sibling_rho[table_name] = rho
+                self._sibling_rho[table_name] = self._estimate_sibling_rho(
+                    table_name, sampler, table_data
+                )
 
         self._fit_parent_indices = {}
+
+    def _estimate_sibling_rho(self, table_name, sampler, table_data, chunk_size=500_000):
+        """Intraclass correlation of the residuals of the columns that are not copied."""
+        copied = set(self._sibling_match_rates.get(table_name, {}))
+        columns = [column for column in sampler.own_columns if column not in copied]
+        rho = pd.Series(0.0, index=sampler.own_columns)
+        if not columns:
+            return rho
+
+        accumulator = IntraclassAccumulator(self._fit_parent_indices[table_name], len(columns))
+        for start in range(0, len(table_data), chunk_size):
+            chunk = table_data.iloc[start : start + chunk_size]
+            accumulator.add(start, sampler.residuals(chunk, columns))
+
+        rho[columns] = accumulator.result()
+        return rho
 
     @staticmethod
     def _resample_counts(cardinality, num_parents):
@@ -897,7 +910,8 @@ class IndependentSynthesizer(BaseIndependentSampler, BaseMultiTableSynthesizer):
             sampler = self._get_conditional_sampler(
                 table_name, synthesizer._model, list(context.columns), sibling_rho
             )
-            raw_sampled = sampler.sample(context, groups)
+            raw_sampled = sampler.sample(context, groups, include_context=False)
+            del context
 
         sampled = synthesizer._data_processor.reverse_transform(raw_sampled)
         sampled = synthesizer.reverse_transform_constraints(sampled)
@@ -907,17 +921,24 @@ class IndependentSynthesizer(BaseIndependentSampler, BaseMultiTableSynthesizer):
                 'together with the correlation options of the IndependentSynthesizer.'
             )
 
-        input_columns = set(synthesizer._data_processor._hyper_transformer._input_columns)
-        extra_columns = [
-            column
-            for column in raw_sampled.columns
-            if column not in input_columns and column not in sampled.columns
+        # the extra columns (counts and context) stay only in the processed rows, and only the
+        # ones that the children of this table use are kept
+        needed = [
+            column for column in self._get_needed_columns(table_name) if column in raw_sampled
         ]
-        sampled = sampled.reset_index(drop=True)
-        for column in extra_columns:
-            sampled[column] = raw_sampled[column].to_numpy()
+        return raw_sampled[needed], sampled.reset_index(drop=True)
 
-        return raw_sampled, sampled
+    def _get_needed_columns(self, table_name):
+        """Processed columns of ``table_name`` used to sample its children."""
+        needed = []
+        for child_name, (parent_name, foreign_key) in self._primary_relationships.items():
+            if parent_name != table_name:
+                continue
+
+            needed.append(self._get_cardinality_column(child_name, foreign_key))
+            needed.extend(self._context_model_columns.get(child_name, {}).values())
+
+        return list(dict.fromkeys(needed))
 
     def _build_context(self, child_name, assignment, parent_processed, parent_table):
         context_columns = self._get_context_columns(child_name)
@@ -961,7 +982,6 @@ class IndependentSynthesizer(BaseIndependentSampler, BaseMultiTableSynthesizer):
 
         sampled_data = {}
         processed = {}
-        assignments = {}
         for table_name in self._get_sampling_order():
             if table_name in self.lookup_tables:
                 sampled_data[table_name] = self._lookup_data[table_name].copy()
@@ -1001,7 +1021,6 @@ class IndependentSynthesizer(BaseIndependentSampler, BaseMultiTableSynthesizer):
 
             processed[table_name] = raw_sampled
             sampled_data[table_name] = sampled
-            assignments[table_name] = assignment
 
         for relationship in self.metadata.relationships:
             parent_name = relationship['parent_table_name']

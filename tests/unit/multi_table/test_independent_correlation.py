@@ -9,6 +9,7 @@ from sdv.errors import SynthesizerInputError
 from sdv.metadata.metadata import Metadata
 from sdv.multi_table._conditional import ConditionalCopulaSampler
 from sdv.multi_table._group_features import (
+    IntraclassAccumulator,
     apply_group_rule,
     intraclass_correlation,
     positions_from_assignment,
@@ -114,6 +115,23 @@ class TestGroupFeatures:
         # Assert
         assert rho[0] == pytest.approx(0.6, abs=0.05)
         assert rho[1] == pytest.approx(0.0, abs=0.05)
+
+    def test_intraclass_accumulator_matches_full_computation(self):
+        """Test that accumulating chunks gives the same result as the full matrix."""
+        # Setup
+        rng = np.random.default_rng(0)
+        groups = rng.integers(0, 3000, 20_000)
+        groups[:500] = -1
+        values = rng.normal(size=(20_000, 2))
+        values[:, 0] += rng.normal(size=3000)[groups]
+        accumulator = IntraclassAccumulator(groups, 2)
+
+        # Run
+        for start in range(0, 20_000, 7000):
+            accumulator.add(start, values[start : start + 7000])
+
+        # Assert
+        np.testing.assert_allclose(accumulator.result(), intraclass_correlation(values, groups))
 
     def test_intraclass_correlation_single_row_groups(self):
         """Test that groups of one row carry no information."""

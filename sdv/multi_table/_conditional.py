@@ -117,13 +117,15 @@ class ConditionalCopulaSampler:
 
         return np.column_stack(normal)
 
-    def residuals(self, data):
-        """Return the own columns of ``data`` in normal space minus their conditional mean."""
-        normal_own = self.to_normal(data, self.own_columns)
+    def residuals(self, data, columns=None):
+        """Return own ``columns`` of ``data`` in normal space minus their conditional mean."""
+        columns = self.own_columns if columns is None else list(columns)
+        indices = [self.own_columns.index(column) for column in columns]
+        normal_own = self.to_normal(data, columns)
         normal_context = self.to_normal(data, self.context_columns)
-        return normal_own - normal_context @ self.coefficients.T
+        return normal_own - normal_context @ self.coefficients[indices].T
 
-    def sample(self, context, groups=None):
+    def sample(self, context, groups=None, include_context=True):
         """Sample one row per row of ``context``.
 
         Args:
@@ -131,6 +133,8 @@ class ConditionalCopulaSampler:
                 Values of the context columns, in the processed space of the model.
             groups (numpy.ndarray or None):
                 Group of every row (``-1`` for none), used by the sibling random effect.
+            include_context (bool):
+                Whether to add the context columns to the output. Defaults to ``True``.
 
         Returns:
             pandas.DataFrame:
@@ -157,6 +161,9 @@ class ConditionalCopulaSampler:
         for index, column in enumerate(self.own_columns):
             uniform = stats.norm.cdf(normal[:, index])
             output[column] = self._univariates[column].percent_point(uniform)
+
+        if not include_context:
+            return pd.DataFrame(output, columns=self.own_columns)
 
         for column in self.context_columns:
             output[column] = context[column].to_numpy()

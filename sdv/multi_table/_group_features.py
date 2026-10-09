@@ -75,6 +75,65 @@ def apply_group_rule(table, positions, assignment, rule):
     table[column] = values
 
 
+class IntraclassAccumulator:
+    """Estimate the intraclass correlation of every column from chunks of rows.
+
+    Accumulates per-group sums instead of keeping all the rows, so the memory is
+    ``num_groups x num_columns`` instead of ``num_rows x num_columns``. Gives the same result
+    as ``intraclass_correlation``.
+
+    Args:
+        groups (numpy.ndarray):
+            Group code of every row, ``-1`` for rows without a group.
+        num_columns (int):
+            Number of columns that will be added.
+    """
+
+    def __init__(self, groups, num_columns):
+        groups = np.asarray(groups)
+        valid = groups >= 0
+        _, codes, sizes = np.unique(groups[valid], return_inverse=True, return_counts=True)
+        keep = sizes[codes] >= 2
+        _, kept_codes, self.sizes = np.unique(codes[keep], return_inverse=True, return_counts=True)
+        self.codes = np.full(len(groups), -1)
+        self.codes[np.flatnonzero(valid)[keep]] = kept_codes
+        self.num_columns = num_columns
+        self.sums = np.zeros((len(self.sizes), num_columns))
+        self.squares = np.zeros(num_columns)
+
+    def add(self, start, values):
+        """Add the rows ``start:start + len(values)`` of the values matrix."""
+        codes = self.codes[start : start + len(values)]
+        used = codes >= 0
+        values = np.asarray(values, dtype=float)[used]
+        codes = codes[used]
+        for index in range(self.num_columns):
+            self.sums[:, index] += np.bincount(
+                codes, weights=values[:, index], minlength=len(self.sizes)
+            )
+
+        self.squares += (values**2).sum(axis=0)
+
+    def result(self, max_rho=0.99):
+        """Return the intraclass correlation of every column, in ``[0, max_rho]``."""
+        num_groups = len(self.sizes)
+        num_rows = self.sizes.sum()
+        if num_groups < 2 or num_rows <= num_groups:
+            return np.zeros(self.num_columns)
+
+        means = self.sums / self.sizes[:, None]
+        grand_mean = self.sums.sum(axis=0) / num_rows
+        between = (self.sizes[:, None] * (means - grand_mean) ** 2).sum(axis=0) / (num_groups - 1)
+        within_squares = self.squares - (self.sizes[:, None] * means**2).sum(axis=0)
+        within = within_squares / (num_rows - num_groups)
+        n0 = (num_rows - (self.sizes**2).sum() / num_rows) / (num_groups - 1)
+        denominator = between + (n0 - 1) * within
+        with np.errstate(divide='ignore', invalid='ignore'):
+            rho = np.where(denominator > 0, (between - within) / denominator, 0.0)
+
+        return np.clip(np.nan_to_num(rho), 0.0, max_rho)
+
+
 def intraclass_correlation(values, groups, max_rho=0.99):
     """Estimate the intraclass correlation of every column with a one-way ANOVA.
 

@@ -21,4 +21,5 @@ run --variant core --fractions 0.001 --correlation T2 T3 T4 T4R T5 --encoding pl
 for fraction in 0.005 0.01 0.025; do
   run --variant core --fractions $fraction --correlation FC T2S T3C T4 T4R T5 --label "scale:best"
 done
+run --variant core --fractions 0.01 0.025 --correlation T2 T3 T4 T4R T5 --label "scale:T2..T5(mem-opt)"
 echo "== done E"
