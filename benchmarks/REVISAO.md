@@ -176,7 +176,123 @@ $$
 - agregados dos filhos que afetam o pai (por exemplo, "% de filiais ativas" como atributo da empresa);
 - restrições com rejeição (reject sampling) no caminho condicional, que lança erro.
 
-### 3.5 Quadro comparativo conceitual
+### 3.5 Passo a passo do novo `IndependentSynthesizer` (v2)
+
+Esta seção descreve, na ordem em que o código executa, o que acontece no `fit` e no `sample`. As referências são a `sdv/multi_table/independent.py`, salvo indicação.
+
+A configuração usada como exemplo é a recomendada no CNPJ:
+
+```python
+synthesizer = IndependentSynthesizer(
+    metadata,
+    cardinality_by={t: ['porte_empresa'] for t in ('estabelecimentos', 'socios', 'simples')},  # T2S
+    context_columns={t: {'empresas': ['porte_empresa', 'natureza_juridica']}                  # T3C
+                     for t in ('estabelecimentos', 'socios', 'simples')},
+    sibling_order={'estabelecimentos': {'by': 'identificador_matriz_filial'}},              # T4
+    group_rules={'estabelecimentos': {'column': 'identificador_matriz_filial',
+                                      'first': '1', 'others': '2'}},                         # T4R
+    sibling_correlation=True,                                                                # T5 + I2
+)
+synthesizer.add_constraints([FixedCombinations(['uf', 'municipio'],
+                                               table_name='estabelecimentos')])            # FC/I4
+synthesizer.fit(data)
+synthetic = synthesizer.sample('empresas', num_rows)
+```
+
+#### 3.5.1 Inicialização (`__init__`)
+
+| Passo | O que acontece | Por quê |
+|---|---|---|
+| 1 | Valida o metadata e cria **um synthesizer de tabela única** (`GaussianCopulaSynthesizer`) por tabela, como na v1 | Base da escalabilidade: um modelo por tabela |
+| 2 | Define o **pai primário** de cada filho: a primeira relação declarada que não aponta para uma tabela de consulta (`_get_primary_relationships`) | O condicionamento usa um único pai por filho; as demais FKs são atribuídas como na v1 |
+| 3 | Valida as opções: contexto só do pai primário, colunas existentes, codificações válidas | Erros cedo e claros |
+| 4 | Com `lookup_tables` (T1): troca o sdtype da FK no filho de `id` para `categorical` no metadata modificado e recria os synthesizers | A FK passa a ser uma coluna modelada pela cópula do filho |
+
+#### 3.5.2 Pré-processamento (`preprocess`), sobre os dados brutos
+
+| Passo | O que acontece | Por quê |
+|---|---|---|
+| 5 | Pré-processamento padrão do SDV, tabela a tabela (RDT): categóricas → `UniformEncoder` (um intervalo de [0,1] por categoria), numéricas → `FloatFormatter`, datas → timestamp, PII → Faker. As FKs ficam de fora, exceto as de lookup | Leva tudo para o espaço numérico em que a cópula trabalha |
+| 6 | **T1:** guarda uma cópia das tabelas de consulta | Elas serão copiadas, não geradas |
+| 7 | **T4:** ordena os filhos de cada pai por `sibling_order['by']` e calcula a **posição** de cada filho no grupo (0 = primeiro) (`_group_features.sibling_positions`) | No CNPJ, a matriz (`'1'`) fica na posição 0 |
+| 8 | **I1:** guarda os valores **brutos** das colunas de contexto categóricas do pai (`porte_empresa`, `natureza_juridica`) | As dummies são construídas a partir das categorias reais, não da codificação arbitrária do `UniformEncoder` |
+| 9 | **T2S:** define os estratos do pai (categorias de `porte_empresa`; para numéricas, faixas de quantil) e guarda, **por estrato**, o histograma real do nº de filhos (`_fit_cardinality_strata`) | Ex.: porte `01` → {0 filhos: 81%, 1: 18%, …}; porte `05` → outra distribuição |
+| 10 | **I2:** para cada coluna categórica do filho, calcula a taxa real $\pi_{\text{real}}$ de "filho não primeiro com o mesmo valor do primeiro irmão", **média por pai** (`_get_sibling_match_rates`) | Ex.: UF ≈ 0,87; CNAE ≈ 0,68. A média por pai evita que a empresa com 7.903 filiais domine |
+
+#### 3.5.3 Aumento das tabelas (`_augment_tables`), no espaço processado
+
+| Passo | O que acontece | Por quê |
+|---|---|---|
+| 11 | Para cada relação: conta os filhos de cada pai, guarda o histograma global (`_cardinality`) e a taxa de FK nula | Como na v1: garante a cardinalidade exata |
+| 12 | Para a relação primária, guarda o **índice do pai de cada linha filha** | Usado para unir o contexto e estimar o efeito entre irmãos |
+| 13 | **T2** (se `model_cardinality=True`): adiciona ao pai a coluna $\log(1 + n_i + U)$ | A cópula do pai aprende a correlação entre "nº de filhos" e os atributos do pai |
+| 14 | **T3/I1:** adiciona ao filho as colunas de contexto. Numéricas: o valor processado do pai (mediana se a FK for nula). Categóricas: **dummies 0/1** das até 10 categorias mais frequentes (a mais rara sai se elas cobrirem 100%) | Ex.: o estabelecimento ganha `porte==01`, `porte==05`, `natureza==2135`, … |
+| 15 | **T4/I1:** adiciona ao filho as dummies de posição `pos==0`, `pos==1`, `pos==2` (posições ≥ 3 ficam juntas) | A posição vira contexto, como um atributo do pai |
+
+#### 3.5.4 Modelagem (`_model_tables`)
+
+| Passo | O que acontece | Por quê |
+|---|---|---|
+| 16 | Para cada tabela (exceto lookup): remove as FKs não modeladas e ajusta a **cópula gaussiana** nas colunas próprias + contexto numérico (+ coluna de cardinalidade). As **dummies ficam fora** da cópula | Dentro da cópula, uma dummy viraria um valor espalhado por todo o intervalo da categoria, o que atenua o efeito pela metade (medido) |
+| 17 | **I1:** calcula, em blocos de 500 mil linhas, uma **matriz de correlação estendida**: colunas da cópula no espaço normal ($\Phi^{-1}(F(x))$) + dummies padronizadas ($(d - \bar d)/s_d$) (`_fit_context_correlation`) | Dá os coeficientes de uma regressão linear exata das colunas do filho sobre as categorias do pai |
+| 18 | **T5:** calcula o **resíduo** de cada coluna própria não copiada depois de descontar o contexto ($Z_1 - Z_2A^\top$) e estima a correlação intraclasse $\rho_j$ por ANOVA de um fator, só com pais de 2 ou mais filhos, acumulando somas por grupo em blocos (`_estimate_sibling_rho`). Colunas copiadas pela I2 recebem $\rho = 0$ | $\rho_j$ mede quanto da variação residual é compartilhada entre irmãos |
+
+**O que fica guardado no modelo:** um synthesizer por tabela; histogramas de cardinalidade (globais e por estrato); taxas de FK nula; nomes, categorias e estatísticas das colunas de contexto; a correlação estendida; $\rho_j$; e as taxas $\pi_{\text{real}}$. Nada é guardado por linha do pai, ao contrário do HMA.
+
+#### 3.5.5 Sampling (`_sample`)
+
+Sem nenhuma opção de correlação, o código desvia para o caminho da v1 (passo 0). Com opções, ele segue os passos 19 a 30.
+
+| Passo | O que acontece | Por quê |
+|---|---|---|
+| 19 | Ordena as tabelas **com os pais antes dos filhos** (`_get_sampling_order`) | O filho precisa do pai sintético já gerado |
+| 20 | Tabelas de consulta: cópia dos dados reais | T1 |
+| 21 | Tabela raiz (`empresas`): amostra da cópula no espaço processado e transformação reversa para o formato original. Guarda só as colunas processadas que os filhos vão usar | O pai sintético, com seus atributos |
+| 22 | **Atribuição dos pais antes de gerar o filho** (`_assign_parents`):<br>a) reamostra **sem reposição** o multiconjunto real de contagens (repete o conjunto inteiro quantas vezes forem necessárias; o resto é sorteado sem reposição);<br>b) **T2S:** faz isso separadamente **dentro de cada estrato** do pai sintético;<br>c) **T2:** se houver a coluna de cardinalidade, ordena as contagens pelo valor gerado pela cópula (**mapeamento por posto**);<br>d) `np.repeat(índice_do_pai, contagem)` gera a lista ordenada de pais;<br>e) acrescenta $-1$ para os filhos com FK nula, na proporção real | A cardinalidade continua exata (ou exata por estrato), e **quem** recebe mais filhos passa a depender dos atributos do pai |
+| 23 | Monta a **matriz de contexto** de cada linha filha (`_build_context`): dummies das categorias do **pai sintético** daquela linha, valores numéricos processados do pai e dummies da posição, que sai de graça da lista ordenada do passo 22 | Cada linha filha "conhece" o seu pai |
+| 24 | **Amostragem condicionada, por linha e vetorizada** (`_conditional.ConditionalCopulaSampler`):<br>a) leva o contexto ao espaço normal: $Z_2$ (dummies padronizadas; numéricas via $\Phi^{-1}(F(x))$);<br>b) $A = \Sigma_{12}\Sigma_{22}^{-1}$ e $L = \text{chol}(\Sigma_{11} - A\Sigma_{21})$, calculados uma vez;<br>c) **T5:** sorteia $u \sim \mathcal N(0, I)$ **um por pai** e $e \sim \mathcal N(0, I)$ **um por linha**;<br>d) $Z_1 = Z_2A^\top + \sqrt{\rho}\odot(u_{\text{pai}}L^\top) + \sqrt{1-\rho}\odot(eL^\top)$;<br>e) volta às marginais: $X_1 = F^{-1}(\Phi(Z_1))$ | Uma multiplicação de matrizes $n \times k$ condiciona milhões de linhas, cada uma ao seu pai, sem laço em Python |
+| 25 | Transformação reversa do filho (RDT): categorias, datas, Faker para PII, chaves primárias. Restrições como `FixedCombinations` são revertidas aqui | Volta ao formato original |
+| 26 | Preenche a FK com a chave do pai sintético de cada linha (nulos no final) | Integridade referencial |
+| 27 | **I2, cópia entre irmãos** (`_copy_sibling_values`). Para cada coluna categórica:<br>a) mede no sintético a taxa $\pi_{\text{sint}}$ de "igual ao 1º irmão", média por pai;<br>b) se $\pi_{\text{sint}} < \pi_{\text{real}}$, cada filho não primeiro copia o valor do 1º irmão com probabilidade $q = (\pi_{\text{real}} - \pi_{\text{sint}})/(1 - \pi_{\text{sint}})$;<br>c) **um único sorteio por linha** vale para todas as colunas: quem copia uma coluna rara também copia as mais frequentes;<br>d) **I4:** colunas de uma mesma `FixedCombinations` são copiadas juntas | Recupera a semelhança categórica entre irmãos sem gerar pares (UF, município) inválidos |
+| 28 | **T4R, regras de grupo:** o 1º filho de cada pai recebe `first` (`'1'` = matriz) e os demais `others` | 100% por construção |
+| 29 | Outras FKs (não primárias) são atribuídas como na v1 | Pais secundários não condicionam |
+| 30 | Restrições multi-tabela e acabamento (`_finalize`): descarta as colunas auxiliares e restaura os dtypes | Saída com o mesmo schema dos dados reais |
+
+#### 3.5.6 Exemplo numérico mínimo
+
+Dados reais: 4 empresas com 0, 1, 1 e 3 estabelecimentos.
+
+| Empresa real | Porte | Nº de filiais |
+|---|---|---|
+| A | 01 | 0 |
+| B | 01 | 1 |
+| C | 05 | 1 |
+| D | 05 | 3 (matriz em SP; filiais em SP, SP, RJ; mesmo CNAE) |
+
+No fit:
+- **T2S** guarda os histogramas: porte 01 → {0, 1}; porte 05 → {1, 3}.
+- **I2** mede, na empresa D, que 2 das 2 filiais não primeiras têm o mesmo CNAE da matriz ($\pi = 1{,}0$) e 1 de 2 tem a mesma UF ($\pi = 0{,}5$).
+- **T3C** une `porte==01` (0 ou 1) a cada estabelecimento. A cópula estendida aprende, por exemplo, que filiais de porte 05 tendem a ter `situacao_cadastral = 02` (ativa).
+
+No sampling, digamos que a cópula gere 4 empresas sintéticas: W (01), X (05), Y (01), Z (05).
+1. **T2S:** os estratos são reamostrados separadamente. O porte 01 sorteia {0, 1} entre W e Y; o porte 05 sorteia {1, 3} entre X e Z. Por exemplo, W=1, Y=0, X=3, Z=1. O multiconjunto {0, 1, 1, 3} é idêntico ao real, e as empresas de porte 05 continuam com mais filiais.
+2. **Atribuição:** a lista de pais fica `[W, X, X, X, Z]` e as posições `[0, 0, 1, 2, 0]`.
+3. **Contexto:** linha 1 → `porte==01: 1, pos==0: 1`; linhas 2 a 4 → `porte==01: 0`, com `pos` 0, 1 e 2; linha 5 → `porte==01: 0, pos==0: 1`.
+4. **Amostragem condicionada:** as 5 linhas são geradas de uma vez. As linhas de X compartilham o mesmo sorteio $u_X$ nas colunas numéricas (T5).
+5. **Cópia (I2):** nas linhas 3 e 4 (filiais de X), o CNAE é copiado da linha 2 com a probabilidade necessária para levar a taxa sintética a 1,0. A UF é copiada para chegar a cerca de 0,5, e, sempre que é copiada, o município vai junto (I4).
+6. **Regra (T4R):** as linhas 1, 2 e 5 recebem `'1'` (matriz) e as linhas 3 e 4 recebem `'2'` (filial).
+
+#### 3.5.7 Custo de cada passo
+
+| Fase | Passos | Custo adicional em relação à v1 |
+|---|---|---|
+| preprocess | 7 a 10 | $O(n)$ por coluna categórica do filho (taxas de cópia) + $O(n \log n)$ da ordenação de irmãos |
+| fit | 13 a 18 | $k$ colunas extras no filho; uma passada extra em blocos para a correlação estendida e outra para o $\rho$ |
+| sample | 22 a 28 | $O(n \log n)$ do mapeamento por posto; uma multiplicação $n \times k$; $O(n)$ por coluna na cópia |
+
+Medido no CNPJ (§5.4): **+0,2% a +4% de tempo** e **+6% a +23% de memória**.
+
+### 3.6 Quadro comparativo conceitual
 
 | | HMA | v1 | v2 |
 |---|---|---|---|
