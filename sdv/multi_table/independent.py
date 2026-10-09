@@ -394,16 +394,27 @@ class IndependentSynthesizer(BaseIndependentSampler, BaseMultiTableSynthesizer):
         return self.categorical_context == 'one_hot' and sdtype in ('categorical', 'boolean')
 
     def _get_categorical_columns(self, table_name):
-        columns = self._modified_multi_table_metadata.tables[table_name].columns
+        # the original metadata, since constraints such as FixedCombinations merge columns
+        columns = self._original_metadata.tables[table_name].columns
+        lookup_keys = {
+            relationship['child_foreign_key']
+            for relationship in self.metadata.relationships
+            if relationship['child_table_name'] == table_name
+            and self._is_lookup_relationship(relationship)
+        }
         rule_column = self.group_rules.get(table_name, {}).get('column')
         return [
             name
             for name, column_metadata in columns.items()
-            if column_metadata['sdtype'] in ('categorical', 'boolean') and name != rule_column
+            if (column_metadata['sdtype'] in ('categorical', 'boolean') or name in lookup_keys)
+            and name != rule_column
         ]
 
     def _get_sibling_match_rates(self, child_name, child_data):
-        """Share of the non-first siblings that have the same value as the first sibling."""
+        """Share of the non-first siblings that have the same value as the first sibling.
+
+        The share is computed for every parent and then averaged over the parents.
+        """
         foreign_key = self._primary_relationships[child_name][1]
         if foreign_key == self.metadata.tables[child_name].primary_key:
             return {}
@@ -423,9 +434,10 @@ class IndependentSynthesizer(BaseIndependentSampler, BaseMultiTableSynthesizer):
             first = frame[frame['pos'] == 0].drop_duplicates('key').set_index('key')['value']
             others = frame[frame['pos'] > 0]
             if len(others):
-                rates[column] = float(
-                    (others['value'].to_numpy() == first.reindex(others['key']).to_numpy()).mean()
-                )
+                matches = others['value'].to_numpy() == first.reindex(others['key']).to_numpy()
+                # averaged per parent, so a parent with thousands of children does not dominate
+                per_parent = pd.Series(matches).groupby(others['key'].to_numpy()).mean()
+                rates[column] = float(per_parent.mean())
 
         return rates
 
@@ -1027,18 +1039,39 @@ class IndependentSynthesizer(BaseIndependentSampler, BaseMultiTableSynthesizer):
         # also copies the more often shared ones, which keeps pairs such as city and state
         # consistent with each other
         draws = np.random.random(len(assignment))
+        masks = {}
         for column, real_rate in self._sibling_match_rates[table_name].items():
-            values = sampled[column].to_numpy(dtype=object, copy=True)
+            values = sampled[column].to_numpy(dtype=object)
             is_null = pd.isna(values)
             matches = (values == values[first]) | (is_null & is_null[first])
-            synthetic_rate = matches[others].mean()
-            if synthetic_rate >= real_rate or synthetic_rate >= 1:
-                continue
+            synthetic_rate = pd.Series(matches[others]).groupby(assignment[others]).mean().mean()
+            if synthetic_rate < real_rate and synthetic_rate < 1:
+                probability = (real_rate - synthetic_rate) / (1 - synthetic_rate)
+                masks[column] = others & (draws < probability)
 
-            probability = (real_rate - synthetic_rate) / (1 - synthetic_rate)
-            copy = others & (draws < probability)
+        # columns tied by a FixedCombinations constraint are copied together
+        for group in self._get_fixed_combination_groups(table_name):
+            group_masks = [masks[column] for column in group if column in masks]
+            if group_masks:
+                union = np.logical_or.reduce(group_masks)
+                for column in group:
+                    if column in sampled.columns:
+                        masks[column] = union
+
+        for column, copy in masks.items():
+            values = sampled[column].to_numpy(dtype=object, copy=True)
             values[copy] = values[first[copy]]
             sampled[column] = pd.Series(values, index=sampled.index).astype(sampled[column].dtype)
+
+    def _get_fixed_combination_groups(self, table_name):
+        groups = []
+        for constraint in self._get_all_constraints_list():
+            column_names = getattr(constraint, 'column_names', None)
+            if type(constraint).__name__ == 'FixedCombinations' and column_names:
+                if getattr(constraint, 'table_name', None) in (None, table_name):
+                    groups.append(list(column_names))
+
+        return groups
 
     def _add_secondary_foreign_key(
         self, child_table, parent_table, child_name, parent_name, foreign_key

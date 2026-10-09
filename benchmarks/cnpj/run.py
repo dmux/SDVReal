@@ -23,6 +23,7 @@ import psutil
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PARENT_CONTEXT = ['porte_empresa', 'natureza_juridica', 'capital_social']
+CATEGORICAL_CONTEXT = ['porte_empresa', 'natureza_juridica']
 CORRELATION_OPTIONS = {
     'T1': lambda variant: {'lookup_tables': DOMAIN_TABLES} if variant == 'full' else {},
     'T2': lambda variant: {'model_cardinality': True},
@@ -34,6 +35,12 @@ CORRELATION_OPTIONS = {
     'T3': lambda variant: {
         'context_columns': {
             child: {'empresas': PARENT_CONTEXT}
+            for child in ('estabelecimentos', 'socios', 'simples')
+        }
+    },
+    'T3C': lambda variant: {
+        'context_columns': {
+            child: {'empresas': CATEGORICAL_CONTEXT}
             for child in ('estabelecimentos', 'socios', 'simples')
         }
     },
@@ -52,6 +59,7 @@ CORRELATION_OPTIONS = {
         }
     },
     'T5': lambda variant: {'sibling_correlation': True},
+    'FC': lambda variant: {},  # FixedCombinations(uf, municipio), added after init
 }
 PLAN_ENCODING = {'categorical_context': 'processed', 'sibling_categorical': 'latent'}
 DOMAIN_TABLES = ['cnaes', 'motivos', 'municipios', 'naturezas', 'paises', 'qualificacoes']
@@ -231,6 +239,18 @@ def _quality(real, synthetic):
     return metrics
 
 
+def _init_synthesizer(synthesizer_class, fixed_combinations, metadata, **kwargs):
+    synthesizer = synthesizer_class(metadata, **kwargs)
+    if fixed_combinations:
+        from sdv.cag import FixedCombinations
+
+        synthesizer.add_constraints([
+            FixedCombinations(column_names=['uf', 'municipio'], table_name='estabelecimentos')
+        ])
+
+    return synthesizer
+
+
 def worker(config):
     """Run one benchmark configuration and print the result as a JSON line."""
     sys.path.insert(0, HERE)
@@ -267,7 +287,9 @@ def worker(config):
 
     synthesizer = timed(
         'init',
+        _init_synthesizer,
         synthesizer_class[config['synthesizer']],
+        'FC' in config.get('correlation', []),
         metadata,
         locales=['pt_BR'],
         verbose=False,
